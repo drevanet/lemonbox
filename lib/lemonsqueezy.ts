@@ -16,6 +16,8 @@ type LemonSqueezyResponse = {
     type: string;
     attributes?: {
       url?: string;
+      email?: string;
+      name?: string;
     };
   };
   errors?: Array<{
@@ -25,19 +27,17 @@ type LemonSqueezyResponse = {
   }>;
 };
 
+/**
+ * Create a Lemon Squeezy checkout.
+ */
 export async function createCheckout(
   userId: string,
   email: string | null | undefined,
   variantId: string,
   lemonCustomerId?: string | null,
 ) {
-  const apiKey = getRequiredEnv(
-    "LEMONSQUEEZY_API_KEY",
-  );
-
-  const storeId = getRequiredEnv(
-    "LEMONSQUEEZY_STORE_ID",
-  );
+  const apiKey = getRequiredEnv("LEMONSQUEEZY_API_KEY");
+  const storeId = getRequiredEnv("LEMONSQUEEZY_STORE_ID");
 
   const appUrl =
     process.env.NEXT_PUBLIC_APP_URL ||
@@ -53,15 +53,9 @@ export async function createCheckout(
     checkoutData.email = email;
   }
 
-  /*
-   * Lemon Squeezy checkout_data must be an object.
-   *
-   * Do NOT change this to:
-   *
-   * checkout_data: [checkoutData]
-   *
-   * That produces the 422 error you are seeing.
-   */
+  if (lemonCustomerId) {
+    checkoutData.customer_id = Number(lemonCustomerId);
+  }
 
   const body = {
     data: {
@@ -100,13 +94,6 @@ export async function createCheckout(
       },
     },
   };
-
-  /*
-   * lemonCustomerId is intentionally not added as a checkout
-   * relationship here. Lemon Squeezy's Create Checkout endpoint
-   * requires store + variant relationships; customer prefill is
-   * handled through checkout_data.
-   */
 
   const response = await fetch(
     `${API_URL}/checkouts`,
@@ -152,4 +139,78 @@ export async function createCheckout(
   }
 
   return url;
+}
+
+/**
+ * Create a Lemon Squeezy customer for a user.
+ *
+ * This is exported because other parts of the application
+ * import `syncLemonCustomer`.
+ */
+export async function syncLemonCustomer(
+  email: string,
+  name?: string | null,
+) {
+  const apiKey = getRequiredEnv("LEMONSQUEEZY_API_KEY");
+  const storeId = getRequiredEnv("LEMONSQUEEZY_STORE_ID");
+
+  const response = await fetch(
+    `${API_URL}/customers`,
+    {
+      method: "POST",
+
+      headers: {
+        Accept: "application/vnd.api+json",
+        "Content-Type": "application/vnd.api+json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+
+      body: JSON.stringify({
+        data: {
+          type: "customers",
+
+          attributes: {
+            store_id: Number(storeId),
+            name: name || email,
+            email,
+            city: "",
+            region: "",
+            country: "",
+            zip: "",
+            tax_id: null,
+          },
+        },
+      }),
+    },
+  );
+
+  const result =
+    (await response.json()) as LemonSqueezyResponse;
+
+  if (!response.ok) {
+    const detail =
+      result.errors
+        ?.map(
+          (error) =>
+            error.detail ||
+            error.title ||
+            "Unknown Lemon Squeezy error",
+        )
+        .join("; ") ||
+      "Unable to create Lemon Squeezy customer.";
+
+    throw new Error(
+      `Lemon Squeezy customer sync failed: ${detail}`,
+    );
+  }
+
+  const customerId = result.data?.id;
+
+  if (!customerId) {
+    throw new Error(
+      "Lemon Squeezy did not return a customer ID.",
+    );
+  }
+
+  return customerId;
 }
