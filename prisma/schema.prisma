@@ -1,0 +1,58 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String         @id @default(cuid())
+  name          String?
+  email         String         @unique
+  passwordHash  String
+  lemonCustomerId String? @unique
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  projects      Project[]
+  subscription  Subscription?
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  frontImage  String?  @db.Text
+  rightImage  String?  @db.Text
+  topImage    String?  @db.Text
+  background  String   @default("#eef2ff")
+  rotationX   Float    @default(-0.15)
+  rotationY   Float    @default(0.65)
+  rotationZ   Float    @default(0)
+  scale       Float    @default(1)
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  @@index([userId, updatedAt])
+}
+
+model Subscription {
+  id                   String   @id @default(cuid())
+  userId               String   @unique
+  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lemonSubscriptionId  String   @unique
+  lemonCustomerId      String?
+  variantId            String
+  plan                 String
+  status               String
+  renewsAt             DateTime?
+  endsAt               DateTime?
+  currentPeriodStart   DateTime @default(now())
+  downloadsUsed        Int      @default(0)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@index([status, variantId])
+}
