@@ -3,14 +3,12 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import {
+  ImagePlus,
+  Save,
+  Download,
+  Trash2,
   ArrowLeft,
   Crown,
-  Download,
-  ImagePlus,
-  Loader2,
-  Save,
-  Trash2,
-  X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -29,22 +27,11 @@ type Project = {
   rightImage: string | null;
   topImage: string | null;
   background: string;
-  rotationX?: number;
-  rotationY?: number;
-  rotationZ?: number;
   scale: number;
 };
 
 type EditorClientProps = {
   projectId: string | null;
-};
-
-type FaceKey = keyof FaceImages;
-
-const faceLabels: Record<FaceKey, string> = {
-  front: "Front",
-  right: "Right",
-  top: "Top",
 };
 
 export default function EditorClient({
@@ -54,20 +41,17 @@ export default function EditorClient({
 
   const canvasWrap = useRef<HTMLDivElement>(null);
 
-  const frontFileRef =
-    useRef<HTMLInputElement>(null);
+  const fileRefs = {
+    front: useRef<HTMLInputElement>(null),
+    right: useRef<HTMLInputElement>(null),
+    top: useRef<HTMLInputElement>(null),
+  };
 
-  const rightFileRef =
-    useRef<HTMLInputElement>(null);
+  const [projectId, setProjectId] = useState<string | null>(
+    initialProjectId,
+  );
 
-  const topFileRef =
-    useRef<HTMLInputElement>(null);
-
-  const [projectId, setProjectId] =
-    useState<string | null>(initialProjectId);
-
-  const [name, setName] =
-    useState("Untitled box");
+  const [name, setName] = useState("Untitled box");
 
   const [images, setImages] = useState<FaceImages>({
     front: null,
@@ -75,74 +59,14 @@ export default function EditorClient({
     top: null,
   });
 
-  const [background, setBackground] =
-    useState("#eef2ff");
+  const [background, setBackground] = useState("#eef2ff");
+  const [scale, setScale] = useState(1);
 
-  const [scale, setScale] =
-    useState(1);
+  const [saving, setSaving] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [message, setMessage] = useState("");
+  const [billing, setBilling] = useState(false);
 
-  const [saving, setSaving] =
-    useState(false);
-
-  const [downloading, setDownloading] =
-    useState(false);
-
-  const [deleting, setDeleting] =
-    useState(false);
-
-  const [message, setMessage] =
-    useState("");
-
-  const [billing, setBilling] =
-    useState(false);
-
-  /*
-   * Lock body scrolling while billing
-   * modal is open.
-   */
-  useEffect(() => {
-    if (!billing) {
-      document.body.style.overflow = "";
-      return;
-    }
-
-    document.body.style.overflow = "hidden";
-
-    return () => {
-      document.body.style.overflow = "";
-    };
-  }, [billing]);
-
-  /*
-   * Close billing modal with Escape.
-   */
-  useEffect(() => {
-    if (!billing) return;
-
-    function handleKeyDown(
-      event: KeyboardEvent,
-    ) {
-      if (event.key === "Escape") {
-        setBilling(false);
-      }
-    }
-
-    window.addEventListener(
-      "keydown",
-      handleKeyDown,
-    );
-
-    return () => {
-      window.removeEventListener(
-        "keydown",
-        handleKeyDown,
-      );
-    };
-  }, [billing]);
-
-  /*
-   * Load existing project.
-   */
   useEffect(() => {
     if (!initialProjectId) return;
 
@@ -150,64 +74,35 @@ export default function EditorClient({
 
     async function loadProject() {
       try {
-        setMessage("");
-
         const response = await fetch(
           `/api/projects/${initialProjectId}`,
-          {
-            cache: "no-store",
-          },
         );
 
         const data = await response.json();
 
         if (!response.ok) {
-          if (!cancelled) {
-            setMessage(
-              data.error ||
-                "Could not load project.",
-            );
-          }
-
+          setMessage(data.error || "Could not load project.");
           return;
         }
 
-        const project =
-          data.project as Project | undefined;
+        const project: Project | undefined = data.project;
 
         if (!project || cancelled) return;
 
         setProjectId(project.id);
-
-        setName(
-          project.name || "Untitled box",
-        );
-
+        setName(project.name);
         setImages({
-          front: project.frontImage ?? null,
-          right: project.rightImage ?? null,
-          top: project.topImage ?? null,
+          front: project.frontImage,
+          right: project.rightImage,
+          top: project.topImage,
         });
-
-        setBackground(
-          project.background || "#eef2ff",
-        );
-
-        setScale(
-          typeof project.scale === "number"
-            ? project.scale
-            : 1,
-        );
+        setBackground(project.background);
+        setScale(project.scale);
       } catch (error) {
-        console.error(
-          "Failed to load project:",
-          error,
-        );
+        console.error("Load project error:", error);
 
         if (!cancelled) {
-          setMessage(
-            "Could not load project.",
-          );
+          setMessage("Could not load project.");
         }
       }
     }
@@ -219,92 +114,42 @@ export default function EditorClient({
     };
   }, [initialProjectId]);
 
-  /*
-   * Upload image to a face.
-   */
-  function handleImageUpload(
-    face: FaceKey,
-    event: React.ChangeEvent<HTMLInputElement>,
+  async function upload(
+    face: keyof FaceImages,
+    file?: File,
   ) {
-    const file = event.target.files?.[0];
-
     if (!file) return;
 
-    if (!file.type.startsWith("image/")) {
-      setMessage(
-        "Please select a valid image file.",
-      );
-
-      event.target.value = "";
-      return;
-    }
-
-    if (file.size > 10 * 1024 * 1024) {
-      setMessage(
-        "Image must be smaller than 10 MB.",
-      );
-
-      event.target.value = "";
+    if (file.size > 3_000_000) {
+      setMessage("Keep each artwork image below 3 MB.");
       return;
     }
 
     const reader = new FileReader();
 
     reader.onload = () => {
-      const result = reader.result;
-
-      if (typeof result !== "string") {
-        setMessage(
-          "Could not read the selected image.",
-        );
-
-        return;
-      }
-
       setImages((current) => ({
         ...current,
-        [face]: result,
+        [face]: reader.result as string,
       }));
 
       setMessage("");
-
-      /*
-       * Allow the same image to be selected
-       * again later.
-       */
-      event.target.value = "";
     };
 
     reader.onerror = () => {
-      setMessage(
-        "Could not read the selected image.",
-      );
-
-      event.target.value = "";
+      setMessage("Could not read that image.");
     };
 
     reader.readAsDataURL(file);
   }
 
-  function removeImage(face: FaceKey) {
-    setImages((current) => ({
-      ...current,
-      [face]: null,
-    }));
-  }
+  async function save() {
+    setSaving(true);
+    setMessage("");
 
-  /*
-   * Save project.
-   */
-  async function handleSave() {
     try {
-      setSaving(true);
-      setMessage("");
-
-      const payload = {
-        name:
-          name.trim() ||
-          "Untitled box",
+      const body = {
+        name,
         frontImage: images.front,
         rightImage: images.right,
         topImage: images.top,
@@ -312,92 +157,55 @@ export default function EditorClient({
         scale,
       };
 
-      let response: Response;
-
-      if (projectId) {
-        response = await fetch(
-          `/api/projects/${projectId}`,
-          {
-            method: "PUT",
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-            body: JSON.stringify(payload),
+      const response = await fetch(
+        projectId
+          ? `/api/projects/${projectId}`
+          : "/api/projects",
+        {
+          method: projectId ? "PUT" : "POST",
+          headers: {
+            "Content-Type": "application/json",
           },
-        );
-      } else {
-        response = await fetch(
-          "/api/projects",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
-            body: JSON.stringify(payload),
-          },
-        );
-      }
+          body: JSON.stringify(body),
+        },
+      );
 
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(
-          data.error ||
-            "Unable to save project.",
+        setMessage(
+          data.error || "Could not save the project.",
+        );
+        return;
+      }
+
+      if (!projectId && data.project?.id) {
+        setProjectId(data.project.id);
+
+        router.replace(
+          `/editor?id=${data.project.id}`,
         );
       }
 
-      if (data.project?.id) {
-        setProjectId(data.project.id);
-
-        if (!projectId) {
-          router.replace(
-            `/editor?id=${data.project.id}`,
-          );
-        }
-      }
-
-      setMessage("Project saved.");
+      setMessage("Saved");
     } catch (error) {
-      console.error(
-        "Save project error:",
-        error,
-      );
-
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : "Unable to save project.",
-      );
+      console.error("Save project error:", error);
+      setMessage("Could not save the project.");
     } finally {
       setSaving(false);
     }
   }
 
-  /*
-   * Delete project.
-   */
-  async function handleDelete() {
-    if (!projectId) {
-      setMessage(
-        "This project has not been saved yet.",
-      );
-
-      return;
-    }
+  async function remove() {
+    if (!projectId) return;
 
     const confirmed = window.confirm(
-      "Delete this project? This cannot be undone.",
+      "Delete this project?",
     );
 
     if (!confirmed) return;
 
     try {
-      setDeleting(true);
-      setMessage("");
-
       const response = await fetch(
         `/api/projects/${projectId}`,
         {
@@ -405,110 +213,101 @@ export default function EditorClient({
         },
       );
 
-      const data = await response.json();
-
       if (!response.ok) {
-        throw new Error(
-          data.error ||
-            "Unable to delete project.",
+        const data = await response.json();
+
+        setMessage(
+          data.error || "Could not delete the project.",
         );
+
+        return;
       }
 
       router.push("/dashboard");
     } catch (error) {
-      console.error(
-        "Delete project error:",
-        error,
-      );
-
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : "Unable to delete project.",
-      );
-    } finally {
-      setDeleting(false);
+      console.error("Delete project error:", error);
+      setMessage("Could not delete the project.");
     }
   }
 
-  /*
-   * Download PNG.
-   */
-  async function handleDownload() {
-    if (!canvasWrap.current) {
+  async function download() {
+    if (!projectId) {
       setMessage(
-        "The editor is not ready yet.",
+        "Save the project before downloading.",
       );
-
       return;
     }
 
-    try {
-      setDownloading(true);
-      setMessage("");
+    setDownloading(true);
+    setMessage("");
 
-      /*
-       * Server-side download quota check.
-       */
-      const quotaResponse = await fetch(
+    try {
+      const permission = await fetch(
         "/api/downloads",
         {
           method: "POST",
           headers: {
-            "Content-Type":
-              "application/json",
+            "Content-Type": "application/json",
           },
+          body: JSON.stringify({
+            projectId,
+          }),
         },
       );
 
-      const quotaData =
-        await quotaResponse.json();
+      const permissionData =
+        await permission.json();
 
-      if (!quotaResponse.ok) {
-        throw new Error(
-          quotaData.error ||
-            "Download limit reached.",
+      if (!permission.ok) {
+        setMessage(
+          permissionData.error ||
+            "Download unavailable.",
         );
+
+        if (
+          permission.status === 402 ||
+          permission.status === 429
+        ) {
+          setBilling(true);
+        }
+
+        return;
       }
 
       const canvas =
-        canvasWrap.current.querySelector(
+        canvasWrap.current?.querySelector(
           "canvas",
         );
 
       if (!canvas) {
-        throw new Error(
-          "Could not find the editor canvas.",
+        setMessage(
+          "Preview is not ready yet.",
         );
+        return;
       }
-
-      const dataUrl =
-        canvas.toDataURL("image/png");
 
       const link =
         document.createElement("a");
 
-      const safeName =
-        (name || "boxshot")
-          .trim()
-          .replace(
-            /[^a-z0-9-_]+/gi,
-            "-",
-          )
-          .replace(
-            /^-+|-+$/g,
-            "",
-          ) || "boxshot";
+      link.download =
+        `${
+          name
+            .replace(/[^a-z0-9]+/gi, "-")
+            .toLowerCase() || "boxshot"
+        }.png`;
 
-      link.download = `${safeName}.png`;
-      link.href = dataUrl;
+      link.href =
+        canvas.toDataURL(
+          "image/png",
+          1,
+        );
 
-      document.body.appendChild(link);
       link.click();
-      link.remove();
 
       setMessage(
-        "PNG downloaded successfully.",
+        permissionData.downloadLimit === null
+          ? "Downloaded — unlimited plan"
+          : "Downloaded",
       );
     } catch (error) {
       console.error(
@@ -517,290 +316,197 @@ export default function EditorClient({
       );
 
       setMessage(
-        error instanceof Error
-          ? error.message
-          : "Unable to download PNG.",
+        "Could not download the PNG.",
       );
     } finally {
       setDownloading(false);
     }
   }
 
-  function openFilePicker(face: FaceKey) {
-    if (face === "front") {
-      frontFileRef.current?.click();
-    }
-
-    if (face === "right") {
-      rightFileRef.current?.click();
-    }
-
-    if (face === "top") {
-      topFileRef.current?.click();
-    }
-  }
-
   return (
     <main className="min-h-screen bg-slate-100">
-      {/* HEADER */}
-      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4 px-4 py-3 md:px-6">
-          <div className="flex min-w-0 items-center gap-3">
+      <header className="border-b bg-white">
+        <div className="mx-auto flex max-w-[1500px] items-center justify-between px-5 py-4">
+          <div className="flex items-center gap-3">
             <Link
               href="/dashboard"
-              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 transition hover:bg-slate-50"
-              title="Back to dashboard"
+              className="rounded-lg p-2 hover:bg-slate-100"
             >
-              <ArrowLeft size={19} />
+              <ArrowLeft size={18} />
             </Link>
 
-            <div className="min-w-0">
+            <div>
               <input
                 value={name}
                 onChange={(event) =>
                   setName(event.target.value)
                 }
-                className="w-full max-w-[260px] truncate border-0 bg-transparent p-0 text-base font-black text-slate-950 outline-none focus:ring-0 md:text-lg"
-                placeholder="Untitled box"
+                className="w-48 bg-transparent font-bold outline-none sm:w-72"
               />
 
-              {projectId && (
-                <div className="text-xs text-slate-400">
-                  Saved project
-                </div>
-              )}
+              <p className="text-xs text-slate-400">
+                3D BoxShot Editor
+              </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {/* VIEW PLANS */}
+          <div className="flex gap-2">
             <button
               type="button"
-              onClick={() =>
-                setBilling(true)
-              }
-              className="hidden items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-indigo-700 sm:flex"
-            >
-              <Crown size={16} />
-              View Plans
-            </button>
-
-            {/* SAVE */}
-            <button
-              type="button"
-              onClick={handleSave}
+              onClick={save}
               disabled={saving}
-              className="flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold disabled:opacity-50"
             >
-              {saving ? (
-                <Loader2
-                  size={17}
-                  className="animate-spin"
-                />
-              ) : (
-                <Save size={17} />
-              )}
+              <Save size={16} />
 
-              <span className="hidden sm:inline">
-                {saving ? "Saving..." : "Save"}
-              </span>
+              {saving ? "Saving…" : "Save"}
             </button>
 
-            {/* DOWNLOAD */}
             <button
               type="button"
-              onClick={handleDownload}
+              onClick={download}
               disabled={downloading}
-              className="flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
             >
-              {downloading ? (
-                <Loader2
-                  size={17}
-                  className="animate-spin"
-                />
-              ) : (
-                <Download size={17} />
-              )}
+              <Download size={16} />
 
-              <span className="hidden sm:inline">
-                {downloading
-                  ? "Preparing..."
-                  : "Download"}
-              </span>
+              {downloading
+                ? "Preparing…"
+                : "Download PNG"}
             </button>
           </div>
         </div>
       </header>
 
-      {/* MESSAGE */}
-      {message && (
-        <div className="mx-auto max-w-[1600px] px-4 pt-4 md:px-6">
-          <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-medium text-indigo-800">
-            {message}
-          </div>
-        </div>
-      )}
+      <div className="mx-auto grid max-w-[1500px] gap-5 p-5 lg:grid-cols-[280px_1fr_280px]">
+        {/* ARTWORK SIDEBAR */}
+        <aside className="order-2 rounded-2xl border bg-white p-5 lg:order-1">
+          <h2 className="font-bold">
+            Artwork
+          </h2>
 
-      {/* EDITOR */}
-      <div className="mx-auto grid max-w-[1600px] gap-5 p-4 md:p-6 lg:grid-cols-[280px_minmax(0,1fr)_280px]">
-        {/* LEFT PANEL */}
-        <aside className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-5">
-            <h2 className="text-lg font-black text-slate-950">
-              Box faces
-            </h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Upload images for the visible
+            faces.
+          </p>
 
-            <p className="mt-1 text-sm text-slate-500">
-              Upload artwork for each side of
-              your box.
-            </p>
-          </div>
+          <Face
+            name="Front"
+            value={images.front}
+            onClick={() =>
+              fileRefs.front.current?.click()
+            }
+          />
 
-          <div className="space-y-4">
-            {(
-              [
+          <input
+            ref={fileRefs.front}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(event) =>
+              upload(
                 "front",
+                event.target.files?.[0],
+              )
+            }
+          />
+
+          <Face
+            name="Right side"
+            value={images.right}
+            onClick={() =>
+              fileRefs.right.current?.click()
+            }
+          />
+
+          <input
+            ref={fileRefs.right}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(event) =>
+              upload(
                 "right",
+                event.target.files?.[0],
+              )
+            }
+          />
+
+          <Face
+            name="Top"
+            value={images.top}
+            onClick={() =>
+              fileRefs.top.current?.click()
+            }
+          />
+
+          <input
+            ref={fileRefs.top}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(event) =>
+              upload(
                 "top",
-              ] as FaceKey[]
-            ).map((face) => (
-              <div
-                key={face}
-                className="rounded-2xl border border-slate-200 p-4"
-              >
-                <div className="mb-3 flex items-center justify-between">
-                  <span className="text-sm font-bold text-slate-900">
-                    {faceLabels[face]}
-                  </span>
-
-                  {images[face] && (
-                    <button
-                      type="button"
-                      onClick={() =>
-                        removeImage(face)
-                      }
-                      className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600"
-                      title={`Remove ${face} image`}
-                    >
-                      <Trash2 size={15} />
-                    </button>
-                  )}
-                </div>
-
-                {images[face] ? (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      openFilePicker(face)
-                    }
-                    className="group relative block aspect-square w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-50"
-                  >
-                    <img
-                      src={images[face] || ""}
-                      alt={`${face} preview`}
-                      className="h-full w-full object-cover"
-                    />
-
-                    <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-sm font-bold text-white opacity-0 transition group-hover:opacity-100">
-                      Change image
-                    </div>
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      openFilePicker(face)
-                    }
-                    className="flex aspect-square w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 text-slate-500 transition hover:border-indigo-400 hover:bg-indigo-50 hover:text-indigo-600"
-                  >
-                    <ImagePlus size={24} />
-
-                    <span className="mt-2 text-xs font-bold">
-                      Upload {face}
-                    </span>
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-
-          <input
-            ref={frontFileRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(event) =>
-              handleImageUpload(
-                "front",
-                event,
+                event.target.files?.[0],
               )
             }
           />
 
-          <input
-            ref={rightFileRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(event) =>
-              handleImageUpload(
-                "right",
-                event,
-              )
-            }
-          />
-
-          <input
-            ref={topFileRef}
-            type="file"
-            accept="image/*"
-            className="hidden"
-            onChange={(event) =>
-              handleImageUpload(
-                "top",
-                event,
-              )
-            }
-          />
-        </aside>
-
-        {/* CENTER CANVAS */}
-        <section
-          ref={canvasWrap}
-          className="relative min-h-[520px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
-          style={{
-            background,
-          }}
-        >
-          <div className="absolute left-4 top-4 z-10 rounded-xl bg-white/90 px-3 py-2 text-xs font-bold text-slate-600 shadow-sm backdrop-blur">
-            3D Preview
-          </div>
-
-          <div className="absolute right-4 top-4 z-10 flex items-center gap-2 rounded-xl bg-white/90 px-3 py-2 shadow-sm backdrop-blur">
-            <span className="text-xs font-bold text-slate-500">
-              Scale
-            </span>
+          <label className="mt-6 block text-sm font-semibold">
+            Box scale
 
             <input
               type="range"
-              min="0.5"
-              max="1.5"
-              step="0.01"
+              min="0.7"
+              max="1.4"
+              step="0.05"
               value={scale}
               onChange={(event) =>
                 setScale(
                   Number(event.target.value),
                 )
               }
-              className="w-24"
+              className="mt-3 w-full"
             />
+          </label>
 
-            <span className="w-10 text-right text-xs font-bold text-slate-700">
-              {scale.toFixed(2)}
-            </span>
-          </div>
+          <label className="mt-5 block text-sm font-semibold">
+            Background
 
-          <div className="h-[620px] w-full">
+            <input
+              type="color"
+              value={background}
+              onChange={(event) =>
+                setBackground(
+                  event.target.value,
+                )
+              }
+              className="mt-3 h-10 w-full cursor-pointer rounded-lg"
+            />
+          </label>
+
+          {projectId && (
+            <button
+              type="button"
+              onClick={remove}
+              className="mt-8 inline-flex items-center gap-2 text-sm font-semibold text-red-500"
+            >
+              <Trash2 size={16} />
+              Delete project
+            </button>
+          )}
+        </aside>
+
+        {/* 3D PREVIEW */}
+        <section className="order-1 min-h-[620px] lg:order-2">
+          <div
+            ref={canvasWrap}
+            className="h-[620px] rounded-3xl"
+            style={{
+              background,
+            }}
+          >
             <BoxScene
               images={images}
               scale={scale}
@@ -808,181 +514,89 @@ export default function EditorClient({
           </div>
         </section>
 
-        {/* RIGHT PANEL */}
-        <aside className="space-y-5">
-          {/* BACKGROUND */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="text-lg font-black text-slate-950">
-              Background
+        {/* DOWNLOAD / BILLING SIDEBAR */}
+        <aside className="order-3 h-fit rounded-2xl border bg-white p-5">
+          <div className="flex items-center gap-2">
+            <Crown
+              size={18}
+              className="text-indigo-500"
+            />
+
+            <h2 className="font-bold">
+              Downloads
             </h2>
-
-            <p className="mt-1 text-sm text-slate-500">
-              Choose the preview background.
-            </p>
-
-            <div className="mt-5 flex items-center gap-3">
-              <input
-                type="color"
-                value={background}
-                onChange={(event) =>
-                  setBackground(
-                    event.target.value,
-                  )
-                }
-                className="h-12 w-12 cursor-pointer rounded-xl border border-slate-200 bg-white p-1"
-              />
-
-              <input
-                type="text"
-                value={background}
-                onChange={(event) =>
-                  setBackground(
-                    event.target.value,
-                  )
-                }
-                className="min-w-0 flex-1 rounded-xl border border-slate-200 px-3 py-3 text-sm font-semibold uppercase outline-none focus:border-indigo-500"
-              />
-            </div>
           </div>
 
-          {/* BILLING */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600">
-              <Crown size={19} />
-            </div>
+          <p className="mt-2 text-sm leading-6 text-slate-500">
+            Save projects for free. A
+            subscription is required to export
+            PNG downloads.
+          </p>
 
-            <h2 className="mt-4 text-lg font-black text-slate-950">
-              Upgrade your account
-            </h2>
-
-            <p className="mt-1 text-sm leading-6 text-slate-500">
-              Subscribe to unlock downloads
-              and additional BoxShot Maker
-              features.
-            </p>
-
-            <button
-              type="button"
-              onClick={() =>
-                setBilling(true)
-              }
-              className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-indigo-700"
-            >
-              <Crown size={17} />
-              View Plans
-            </button>
-          </div>
-
-          {/* ACTIONS */}
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="text-lg font-black text-slate-950">
-              Actions
-            </h2>
-
-            <div className="mt-4 space-y-3">
-              <button
-                type="button"
-                onClick={handleSave}
-                disabled={saving}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-slate-950 px-4 py-3 text-sm font-bold text-white transition hover:bg-slate-800 disabled:opacity-50"
-              >
-                {saving ? (
-                  <Loader2
-                    size={17}
-                    className="animate-spin"
-                  />
-                ) : (
-                  <Save size={17} />
-                )}
-
-                Save Project
-              </button>
-
-              <button
-                type="button"
-                onClick={handleDownload}
-                disabled={downloading}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-indigo-700 disabled:opacity-50"
-              >
-                {downloading ? (
-                  <Loader2
-                    size={17}
-                    className="animate-spin"
-                  />
-                ) : (
-                  <Download size={17} />
-                )}
-
-                Download PNG
-              </button>
-
-              {projectId && (
-                <button
-                  type="button"
-                  onClick={handleDelete}
-                  disabled={deleting}
-                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-white px-4 py-3 text-sm font-bold text-red-600 transition hover:bg-red-50 disabled:opacity-50"
-                >
-                  {deleting ? (
-                    <Loader2
-                      size={17}
-                      className="animate-spin"
-                    />
-                  ) : (
-                    <Trash2 size={17} />
-                  )}
-
-                  Delete Project
-                </button>
-              )}
-            </div>
-          </div>
-        </aside>
-      </div>
-
-      {/* BILLING MODAL */}
-      {billing && (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4"
-          onMouseDown={(event) => {
-            if (
-              event.target ===
-              event.currentTarget
-            ) {
-              setBilling(false);
+          <button
+            type="button"
+            onClick={() =>
+              setBilling((value) => !value)
             }
-          }}
-        >
-          <div className="relative max-h-[90vh] w-full max-w-6xl overflow-y-auto rounded-3xl bg-white p-6 shadow-2xl md:p-8">
-            <button
-              type="button"
-              onClick={() =>
-                setBilling(false)
-              }
-              className="absolute right-5 top-5 z-10 rounded-full p-2 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900"
-              aria-label="Close"
-            >
-              <X size={20} />
-            </button>
+            className="mt-4 w-full rounded-xl border px-4 py-3 text-sm font-semibold"
+          >
+            View plans
+          </button>
 
-            <div className="pr-10">
-              <div className="mb-8">
-                <h2 className="text-3xl font-black text-slate-950">
-                  Choose your plan
-                </h2>
+          {message && (
+            <div className="mt-4 rounded-xl bg-slate-100 p-3 text-sm">
+              {message}
+            </div>
+          )}
 
-                <p className="mt-2 text-slate-500">
-                  Subscribe to unlock PNG
-                  downloads and additional
-                  features.
-                </p>
-              </div>
-
+          {billing && (
+            <div className="mt-5">
               <BillingCards />
             </div>
-          </div>
-        </div>
-      )}
+          )}
+        </aside>
+      </div>
     </main>
+  );
+}
+
+function Face({
+  name,
+  value,
+  onClick,
+}: {
+  name: string;
+  value: string | null;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="mt-4 flex w-full items-center gap-3 rounded-xl border p-3 text-left hover:border-indigo-400"
+    >
+      <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-lg bg-slate-100">
+        {value ? (
+          <img
+            src={value}
+            alt={`${name} artwork`}
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <ImagePlus
+            size={18}
+            className="text-slate-400"
+          />
+        )}
+      </div>
+
+      <span className="text-sm font-semibold">
+        {name}
+
+        <small className="block font-normal text-slate-400">
+          Click to upload
+        </small>
+      </span>
+    </button>
   );
 }
