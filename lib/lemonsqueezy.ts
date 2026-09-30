@@ -18,14 +18,53 @@ type LemonSqueezyResponse = {
       url?: string;
       email?: string;
       name?: string;
+      store_id?: number;
     };
   };
+
   errors?: Array<{
     detail?: string;
     title?: string;
     status?: string;
   }>;
 };
+
+/**
+ * Convert a Lemon Squeezy variant ID
+ * into the internal application plan.
+ */
+export function planFromVariant(
+  variantId: string | number | null | undefined,
+): "starter" | "basic" | "pro" | null {
+  if (!variantId) {
+    return null;
+  }
+
+  const id = String(variantId);
+
+  if (
+    id ===
+    String(process.env.LEMONSQUEEZY_STARTER_VARIANT_ID || "")
+  ) {
+    return "starter";
+  }
+
+  if (
+    id ===
+    String(process.env.LEMONSQUEEZY_BASIC_VARIANT_ID || "")
+  ) {
+    return "basic";
+  }
+
+  if (
+    id ===
+    String(process.env.LEMONSQUEEZY_PRO_VARIANT_ID || "")
+  ) {
+    return "pro";
+  }
+
+  return null;
+}
 
 /**
  * Create a Lemon Squeezy checkout.
@@ -36,8 +75,13 @@ export async function createCheckout(
   variantId: string,
   lemonCustomerId?: string | null,
 ) {
-  const apiKey = getRequiredEnv("LEMONSQUEEZY_API_KEY");
-  const storeId = getRequiredEnv("LEMONSQUEEZY_STORE_ID");
+  const apiKey = getRequiredEnv(
+    "LEMONSQUEEZY_API_KEY",
+  );
+
+  const storeId = getRequiredEnv(
+    "LEMONSQUEEZY_STORE_ID",
+  );
 
   const appUrl =
     process.env.NEXT_PUBLIC_APP_URL ||
@@ -53,6 +97,10 @@ export async function createCheckout(
     checkoutData.email = email;
   }
 
+  /*
+   * If we already have a Lemon Squeezy customer,
+   * pass the customer ID through checkout data.
+   */
   if (lemonCustomerId) {
     checkoutData.customer_id = Number(lemonCustomerId);
   }
@@ -65,9 +113,14 @@ export async function createCheckout(
         checkout_data: checkoutData,
 
         product_options: {
-          enabled_variants: [Number(variantId)],
+          enabled_variants: [
+            Number(variantId),
+          ],
+
           redirect_url: `${appUrl}/dashboard`,
-          receipt_button_text: "Go to Dashboard",
+
+          receipt_button_text:
+            "Go to Dashboard",
         },
 
         checkout_options: {
@@ -101,9 +154,14 @@ export async function createCheckout(
       method: "POST",
 
       headers: {
-        Accept: "application/vnd.api+json",
-        "Content-Type": "application/vnd.api+json",
-        Authorization: `Bearer ${apiKey}`,
+        Accept:
+          "application/vnd.api+json",
+
+        "Content-Type":
+          "application/vnd.api+json",
+
+        Authorization:
+          `Bearer ${apiKey}`,
       },
 
       body: JSON.stringify(body),
@@ -130,7 +188,8 @@ export async function createCheckout(
     );
   }
 
-  const url = result.data?.attributes?.url;
+  const url =
+    result.data?.attributes?.url;
 
   if (!url) {
     throw new Error(
@@ -142,17 +201,19 @@ export async function createCheckout(
 }
 
 /**
- * Create a Lemon Squeezy customer for a user.
- *
- * This is exported because other parts of the application
- * import `syncLemonCustomer`.
+ * Create a Lemon Squeezy customer.
  */
 export async function syncLemonCustomer(
   email: string,
   name?: string | null,
 ) {
-  const apiKey = getRequiredEnv("LEMONSQUEEZY_API_KEY");
-  const storeId = getRequiredEnv("LEMONSQUEEZY_STORE_ID");
+  const apiKey = getRequiredEnv(
+    "LEMONSQUEEZY_API_KEY",
+  );
+
+  const storeId = getRequiredEnv(
+    "LEMONSQUEEZY_STORE_ID",
+  );
 
   const response = await fetch(
     `${API_URL}/customers`,
@@ -160,9 +221,14 @@ export async function syncLemonCustomer(
       method: "POST",
 
       headers: {
-        Accept: "application/vnd.api+json",
-        "Content-Type": "application/vnd.api+json",
-        Authorization: `Bearer ${apiKey}`,
+        Accept:
+          "application/vnd.api+json",
+
+        "Content-Type":
+          "application/vnd.api+json",
+
+        Authorization:
+          `Bearer ${apiKey}`,
       },
 
       body: JSON.stringify({
@@ -171,13 +237,12 @@ export async function syncLemonCustomer(
 
           attributes: {
             store_id: Number(storeId),
-            name: name || email,
+
+            name:
+              name?.trim() ||
+              email,
+
             email,
-            city: "",
-            region: "",
-            country: "",
-            zip: "",
-            tax_id: null,
           },
         },
       }),
@@ -204,7 +269,8 @@ export async function syncLemonCustomer(
     );
   }
 
-  const customerId = result.data?.id;
+  const customerId =
+    result.data?.id;
 
   if (!customerId) {
     throw new Error(
