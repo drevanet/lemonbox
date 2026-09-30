@@ -35,22 +35,6 @@ type Project = {
   scale: number;
 };
 
-type Subscription = {
-  id: string;
-  plan: string;
-  status: string;
-  renewsAt: string | null;
-  endsAt: string | null;
-  downloadsUsed: number;
-  variantId: string;
-};
-
-type SubscriptionResponse = {
-  authenticated: boolean;
-  subscribed: boolean;
-  subscription: Subscription | null;
-};
-
 type EditorClientProps = {
   projectId: string | null;
 };
@@ -62,52 +46,6 @@ const faceLabels: Record<FaceKey, string> = {
   right: "Right",
   top: "Top",
 };
-
-function formatPlanName(plan: string) {
-  switch (plan.toLowerCase()) {
-    case "starter":
-      return "Starter";
-
-    case "basic":
-      return "Creator";
-
-    case "creator":
-      return "Creator";
-
-    case "pro":
-      return "Studio";
-
-    case "studio":
-      return "Studio";
-
-    default:
-      return plan;
-  }
-}
-
-function formatStatus(status: string) {
-  return status
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (letter) =>
-      letter.toUpperCase(),
-    );
-}
-
-function formatDate(date: string | null) {
-  if (!date) return null;
-
-  const parsed = new Date(date);
-
-  if (Number.isNaN(parsed.getTime())) {
-    return null;
-  }
-
-  return parsed.toLocaleDateString(undefined, {
-    year: "numeric",
-    month: "short",
-    day: "numeric",
-  });
-}
 
 export default function EditorClient({
   projectId: initialProjectId,
@@ -158,20 +96,9 @@ export default function EditorClient({
   const [billing, setBilling] =
     useState(false);
 
-  const [subscription, setSubscription] =
-    useState<Subscription | null>(null);
-
-  const [subscribed, setSubscribed] =
-    useState(false);
-
-  const [
-    subscriptionLoading,
-    setSubscriptionLoading,
-  ] = useState(true);
-
   /*
-   * Prevent the page from scrolling while
-   * the billing modal is open.
+   * Lock body scrolling while billing
+   * modal is open.
    */
   useEffect(() => {
     if (!billing) {
@@ -187,12 +114,14 @@ export default function EditorClient({
   }, [billing]);
 
   /*
-   * Escape closes billing modal.
+   * Close billing modal with Escape.
    */
   useEffect(() => {
     if (!billing) return;
 
-    function handleKeyDown(event: KeyboardEvent) {
+    function handleKeyDown(
+      event: KeyboardEvent,
+    ) {
       if (event.key === "Escape") {
         setBilling(false);
       }
@@ -291,69 +220,7 @@ export default function EditorClient({
   }, [initialProjectId]);
 
   /*
-   * Load current subscription.
-   */
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadSubscription() {
-      try {
-        setSubscriptionLoading(true);
-
-        const response = await fetch(
-          "/api/billing/status",
-          {
-            cache: "no-store",
-          },
-        );
-
-        if (!response.ok) {
-          if (!cancelled) {
-            setSubscribed(false);
-            setSubscription(null);
-          }
-
-          return;
-        }
-
-        const data =
-          (await response.json()) as SubscriptionResponse;
-
-        if (cancelled) return;
-
-        setSubscribed(
-          Boolean(data.subscribed),
-        );
-
-        setSubscription(
-          data.subscription ?? null,
-        );
-      } catch (error) {
-        console.error(
-          "Failed to load subscription:",
-          error,
-        );
-
-        if (!cancelled) {
-          setSubscribed(false);
-          setSubscription(null);
-        }
-      } finally {
-        if (!cancelled) {
-          setSubscriptionLoading(false);
-        }
-      }
-    }
-
-    loadSubscription();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  /*
-   * Upload an image to a face.
+   * Upload image to a face.
    */
   function handleImageUpload(
     face: FaceKey,
@@ -372,9 +239,6 @@ export default function EditorClient({
       return;
     }
 
-    /*
-     * Limit image size to 10 MB.
-     */
     if (file.size > 10 * 1024 * 1024) {
       setMessage(
         "Image must be smaller than 10 MB.",
@@ -405,7 +269,8 @@ export default function EditorClient({
       setMessage("");
 
       /*
-       * Allows the same file to be selected again.
+       * Allow the same image to be selected
+       * again later.
        */
       event.target.value = "";
     };
@@ -429,7 +294,7 @@ export default function EditorClient({
   }
 
   /*
-   * Save the project.
+   * Save project.
    */
   async function handleSave() {
     try {
@@ -487,10 +352,6 @@ export default function EditorClient({
       if (data.project?.id) {
         setProjectId(data.project.id);
 
-        /*
-         * If this was a brand-new project,
-         * update the URL without reloading.
-         */
         if (!projectId) {
           router.replace(
             `/editor?id=${data.project.id}`,
@@ -516,7 +377,7 @@ export default function EditorClient({
   }
 
   /*
-   * Delete the current project.
+   * Delete project.
    */
   async function handleDelete() {
     if (!projectId) {
@@ -571,7 +432,7 @@ export default function EditorClient({
   }
 
   /*
-   * Download the rendered canvas.
+   * Download PNG.
    */
   async function handleDownload() {
     if (!canvasWrap.current) {
@@ -587,10 +448,7 @@ export default function EditorClient({
       setMessage("");
 
       /*
-       * Tell the server that a download
-       * is being requested. Your server-side
-       * quota endpoint should reject users
-       * who have reached their limit.
+       * Server-side download quota check.
        */
       const quotaResponse = await fetch(
         "/api/downloads",
@@ -624,12 +482,6 @@ export default function EditorClient({
         );
       }
 
-      /*
-       * Create a PNG from the WebGL canvas.
-       *
-       * preserveDrawingBuffer must be enabled
-       * in BoxScene for this to work reliably.
-       */
       const dataUrl =
         canvas.toDataURL("image/png");
 
@@ -721,52 +573,17 @@ export default function EditorClient({
           </div>
 
           <div className="flex items-center gap-2">
-            {/* SUBSCRIPTION STATUS */}
-            {subscriptionLoading ? (
-              <div className="hidden items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-500 sm:flex">
-                <Loader2
-                  size={16}
-                  className="animate-spin"
-                />
-                Loading plan...
-              </div>
-            ) : subscribed &&
-              subscription ? (
-              <button
-                type="button"
-                onClick={() =>
-                  setBilling(true)
-                }
-                className="hidden items-center gap-3 rounded-xl border border-green-200 bg-green-50 px-3 py-2 text-left transition hover:bg-green-100 sm:flex"
-              >
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-green-600 text-white">
-                  <Crown size={16} />
-                </div>
-
-                <div>
-                  <div className="text-[10px] font-bold uppercase tracking-wide text-green-700">
-                    Current Plan
-                  </div>
-
-                  <div className="text-sm font-black text-green-950">
-                    {formatPlanName(
-                      subscription.plan,
-                    )}
-                  </div>
-                </div>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() =>
-                  setBilling(true)
-                }
-                className="hidden items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-indigo-700 sm:flex"
-              >
-                <Crown size={16} />
-                View Plans
-              </button>
-            )}
+            {/* VIEW PLANS */}
+            <button
+              type="button"
+              onClick={() =>
+                setBilling(true)
+              }
+              className="hidden items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-indigo-700 sm:flex"
+            >
+              <Crown size={16} />
+              View Plans
+            </button>
 
             {/* SAVE */}
             <button
@@ -1028,125 +845,32 @@ export default function EditorClient({
             </div>
           </div>
 
-          {/* SUBSCRIPTION CARD */}
+          {/* BILLING */}
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            {subscriptionLoading ? (
-              <div className="flex items-center gap-2 text-sm text-slate-500">
-                <Loader2
-                  size={17}
-                  className="animate-spin"
-                />
-                Loading subscription...
-              </div>
-            ) : subscribed &&
-              subscription ? (
-              <>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-green-100 text-green-700">
-                        <Crown size={18} />
-                      </div>
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600">
+              <Crown size={19} />
+            </div>
 
-                      <div>
-                        <div className="text-xs font-bold uppercase tracking-wide text-slate-400">
-                          Current Plan
-                        </div>
+            <h2 className="mt-4 text-lg font-black text-slate-950">
+              Upgrade your account
+            </h2>
 
-                        <div className="text-lg font-black text-slate-950">
-                          {formatPlanName(
-                            subscription.plan,
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+            <p className="mt-1 text-sm leading-6 text-slate-500">
+              Subscribe to unlock downloads
+              and additional BoxShot Maker
+              features.
+            </p>
 
-                  <span className="rounded-full bg-green-100 px-2.5 py-1 text-xs font-bold text-green-700">
-                    {formatStatus(
-                      subscription.status,
-                    )}
-                  </span>
-                </div>
-
-                <div className="mt-5 rounded-xl bg-slate-50 p-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-slate-500">
-                      Downloads used
-                    </span>
-
-                    <span className="text-sm font-black text-slate-900">
-                      {subscription.downloadsUsed}
-                    </span>
-                  </div>
-
-                  {subscription.renewsAt && (
-                    <div className="mt-3 flex items-center justify-between border-t border-slate-200 pt-3">
-                      <span className="text-sm text-slate-500">
-                        Renews
-                      </span>
-
-                      <span className="text-sm font-bold text-slate-900">
-                        {formatDate(
-                          subscription.renewsAt,
-                        )}
-                      </span>
-                    </div>
-                  )}
-
-                  {subscription.endsAt && (
-                    <div className="mt-3 flex items-center justify-between border-t border-slate-200 pt-3">
-                      <span className="text-sm text-slate-500">
-                        Ends
-                      </span>
-
-                      <span className="text-sm font-bold text-slate-900">
-                        {formatDate(
-                          subscription.endsAt,
-                        )}
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    setBilling(true)
-                  }
-                  className="mt-4 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-800 transition hover:bg-slate-50"
-                >
-                  View Subscription
-                </button>
-              </>
-            ) : (
-              <>
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-100 text-indigo-600">
-                  <Crown size={19} />
-                </div>
-
-                <h2 className="mt-4 text-lg font-black text-slate-950">
-                  Upgrade your account
-                </h2>
-
-                <p className="mt-1 text-sm leading-6 text-slate-500">
-                  Subscribe to unlock downloads
-                  and additional BoxShot Maker
-                  features.
-                </p>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    setBilling(true)
-                  }
-                  className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-indigo-700"
-                >
-                  <Crown size={17} />
-                  View Plans
-                </button>
-              </>
-            )}
+            <button
+              type="button"
+              onClick={() =>
+                setBilling(true)
+              }
+              className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-indigo-700"
+            >
+              <Crown size={17} />
+              View Plans
+            </button>
           </div>
 
           {/* ACTIONS */}
@@ -1241,125 +965,21 @@ export default function EditorClient({
               <X size={20} />
             </button>
 
-            {subscribed &&
-            subscription ? (
-              <div className="pr-10">
-                <div className="mb-8">
-                  <div className="flex items-center gap-2 text-sm font-bold text-green-600">
-                    <Crown size={17} />
-                    Active Subscription
-                  </div>
+            <div className="pr-10">
+              <div className="mb-8">
+                <h2 className="text-3xl font-black text-slate-950">
+                  Choose your plan
+                </h2>
 
-                  <h2 className="mt-2 text-3xl font-black text-slate-950">
-                    Your subscription
-                  </h2>
-
-                  <p className="mt-2 text-slate-500">
-                    Your current BoxShot Maker
-                    subscription details.
-                  </p>
-                </div>
-
-                <div className="grid gap-5 md:grid-cols-3">
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6">
-                    <div className="text-sm font-medium text-slate-500">
-                      Current Plan
-                    </div>
-
-                    <div className="mt-2 text-2xl font-black text-slate-950">
-                      {formatPlanName(
-                        subscription.plan,
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6">
-                    <div className="text-sm font-medium text-slate-500">
-                      Status
-                    </div>
-
-                    <div className="mt-3 inline-flex rounded-full bg-green-100 px-3 py-1.5 text-sm font-bold text-green-700">
-                      {formatStatus(
-                        subscription.status,
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-slate-200 bg-slate-50 p-6">
-                    <div className="text-sm font-medium text-slate-500">
-                      Downloads
-                    </div>
-
-                    <div className="mt-2 text-2xl font-black text-slate-950">
-                      {
-                        subscription.downloadsUsed
-                      }
-                    </div>
-
-                    <div className="mt-1 text-xs text-slate-500">
-                      Downloads used this
-                      period
-                    </div>
-                  </div>
-                </div>
-
-                {subscription.renewsAt && (
-                  <div className="mt-6 rounded-2xl border border-indigo-100 bg-indigo-50 p-5">
-                    <div className="text-sm font-semibold text-indigo-900">
-                      Next renewal
-                    </div>
-
-                    <div className="mt-1 text-sm text-indigo-700">
-                      {formatDate(
-                        subscription.renewsAt,
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {subscription.endsAt && (
-                  <div className="mt-4 rounded-2xl border border-amber-100 bg-amber-50 p-5">
-                    <div className="text-sm font-semibold text-amber-900">
-                      Subscription ends
-                    </div>
-
-                    <div className="mt-1 text-sm text-amber-700">
-                      {formatDate(
-                        subscription.endsAt,
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                <div className="mt-8">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setBilling(false)
-                    }
-                    className="rounded-xl bg-slate-950 px-5 py-3 text-sm font-bold text-white transition hover:bg-slate-800"
-                  >
-                    Back to Editor
-                  </button>
-                </div>
+                <p className="mt-2 text-slate-500">
+                  Subscribe to unlock PNG
+                  downloads and additional
+                  features.
+                </p>
               </div>
-            ) : (
-              <div className="pr-10">
-                <div className="mb-8">
-                  <h2 className="text-3xl font-black text-slate-950">
-                    Choose your plan
-                  </h2>
 
-                  <p className="mt-2 text-slate-500">
-                    Choose a subscription to
-                    unlock PNG downloads and
-                    additional features.
-                  </p>
-                </div>
-
-                <BillingCards />
-              </div>
-            )}
+              <BillingCards />
+            </div>
           </div>
         </div>
       )}
