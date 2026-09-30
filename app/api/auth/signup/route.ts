@@ -1,46 +1,87 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
+
 import { db } from "@/lib/db";
 import { createSession } from "@/lib/auth";
-import { syncLemonCustomer } from "@/lib/lemonsqueezy";
 
 export async function POST(request: Request) {
   try {
-    const { name, email, password } = await request.json();
-    if (!email || !password || password.length < 8) {
+    const body = await request.json();
+
+    const name = String(body.name || "").trim();
+    const email = String(body.email || "").trim().toLowerCase();
+    const password = String(body.password || "");
+
+    if (!email || !password) {
       return NextResponse.json(
-        { error: "Use a valid email and a password of at least 8 characters." },
+        {
+          error: "Email and password are required.",
+        },
         { status: 400 },
       );
     }
 
-    const normalized = String(email).trim().toLowerCase();
-    const exists = await db.user.findUnique({ where: { email: normalized } });
-    if (exists) {
-      return NextResponse.json({ error: "An account with this email already exists." }, { status: 409 });
+    if (password.length < 8) {
+      return NextResponse.json(
+        {
+          error: "Password must be at least 8 characters.",
+        },
+        { status: 400 },
+      );
     }
 
-    const passwordHash = await bcrypt.hash(password, 12);
-    const lemonCustomerId = await syncLemonCustomer({
-      email: normalized,
-      name: name?.trim() || null,
-    });
-
-    const user = await db.user.create({
-      data: {
-        name: name?.trim() || null,
-        email: normalized,
-        passwordHash,
-        lemonCustomerId,
+    // Check if the account already exists.
+    const existingUser = await db.user.findUnique({
+      where: {
+        email,
       },
     });
 
+    if (existingUser) {
+      return NextResponse.json(
+        {
+          error:
+            "An account with this email already exists.",
+        },
+        { status: 409 },
+      );
+    }
+
+    // Hash the password.
+    const passwordHash = await bcrypt.hash(
+      password,
+      12,
+    );
+
+    // Create the user.
+    // Lemon Squeezy is intentionally NOT called here.
+    const user = await db.user.create({
+      data: {
+        name: name || null,
+        email,
+        passwordHash,
+      },
+    });
+
+    // Create the application session.
     await createSession(user.id);
-    return NextResponse.json({ ok: true });
-  } catch (error) {
-    console.error("Signup error", error);
+
     return NextResponse.json(
-      { error: "Unable to create account. Please try again." },
+      {
+        ok: true,
+      },
+      { status: 201 },
+    );
+  } catch (error) {
+    console.error("SIGNUP ERROR:", error);
+
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Unable to create account. Please try again.",
+      },
       { status: 500 },
     );
   }
