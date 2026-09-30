@@ -9,11 +9,7 @@ export async function GET() {
 
     if (!user) {
       return NextResponse.json(
-        {
-          authenticated: false,
-          subscribed: false,
-          subscription: null,
-        },
+        { error: "Unauthorized" },
         { status: 401 },
       );
     }
@@ -26,7 +22,6 @@ export async function GET() {
 
     if (!subscription) {
       return NextResponse.json({
-        authenticated: true,
         subscribed: false,
         subscription: null,
       });
@@ -38,26 +33,25 @@ export async function GET() {
       "paused",
     ];
 
-    const subscribed = activeStatuses.includes(
-      subscription.status,
-    );
+    const isActive =
+      activeStatuses.includes(subscription.status);
 
     return NextResponse.json({
-      authenticated: true,
-      subscribed,
+      subscribed: isActive,
       subscription: {
-        id: subscription.id,
         plan: subscription.plan,
         status: subscription.status,
+        variantId: subscription.variantId,
+        downloadsUsed: subscription.downloadsUsed,
         renewsAt: subscription.renewsAt,
         endsAt: subscription.endsAt,
-        downloadsUsed: subscription.downloadsUsed,
-        variantId: subscription.variantId,
+        currentPeriodStart:
+          subscription.currentPeriodStart,
       },
     });
   } catch (error) {
     console.error(
-      "Subscription status error:",
+      "Billing status error:",
       error,
     );
 
