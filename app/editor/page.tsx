@@ -1,4 +1,4 @@
-import EditorClient from "/EditorClient";
+import EditorClient from "@/components/EditorClient";
 
 type EditorPageProps = {
   searchParams: Promise<{

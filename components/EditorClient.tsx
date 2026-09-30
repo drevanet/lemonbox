@@ -12,7 +12,8 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
+
 import type { FaceImages } from "./BoxScene";
 import BillingCards from "./BillingCards";
 
@@ -30,19 +31,24 @@ type Project = {
   scale: number;
 };
 
-export default function EditorClient() {
-  const params = useSearchParams();
+type EditorClientProps = {
+  projectId: string | null;
+};
+
+export default function EditorClient({
+  projectId: initialProjectId,
+}: EditorClientProps) {
   const router = useRouter();
 
   const canvasWrap = useRef<HTMLDivElement>(null);
 
-  const fileRefs = {
-    front: useRef<HTMLInputElement>(null),
-    right: useRef<HTMLInputElement>(null),
-    top: useRef<HTMLInputElement>(null),
-  };
+  const frontFileRef = useRef<HTMLInputElement>(null);
+  const rightFileRef = useRef<HTMLInputElement>(null);
+  const topFileRef = useRef<HTMLInputElement>(null);
 
-  const [projectId, setProjectId] = useState(params.get("id"));
+  const [projectId, setProjectId] =
+    useState<string | null>(initialProjectId);
+
   const [name, setName] = useState("Untitled box");
 
   const [images, setImages] = useState<FaceImages>({
@@ -51,51 +57,82 @@ export default function EditorClient() {
     top: null,
   });
 
-  const [background, setBackground] = useState("#eef2ff");
+  const [background, setBackground] =
+    useState("#eef2ff");
+
   const [scale, setScale] = useState(1);
 
   const [saving, setSaving] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [message, setMessage] = useState("");
-
-  // Controls the plans dialog.
   const [billing, setBilling] = useState(false);
 
   /*
    * Load existing project.
    */
   useEffect(() => {
-    const id = params.get("id");
+    if (!initialProjectId) return;
 
-    if (!id) return;
+    let cancelled = false;
 
-    fetch(`/api/projects/${id}`)
-      .then((r) => r.json())
-      .then((d) => {
-        const p: Project = d.project;
+    async function loadProject() {
+      try {
+        const response = await fetch(
+          `/api/projects/${initialProjectId}`,
+        );
 
-        if (!p) return;
+        const data = await response.json();
 
-        setProjectId(p.id);
-        setName(p.name);
+        if (!response.ok) {
+          if (!cancelled) {
+            setMessage(
+              data.error ||
+                "Could not load project.",
+            );
+          }
+
+          return;
+        }
+
+        const project =
+          data.project as Project | undefined;
+
+        if (!project || cancelled) return;
+
+        setProjectId(project.id);
+        setName(project.name);
 
         setImages({
-          front: p.frontImage ?? null,
-          right: p.rightImage ?? null,
-          top: p.topImage ?? null,
+          front: project.frontImage ?? null,
+          right: project.rightImage ?? null,
+          top: project.topImage ?? null,
         });
 
-        setBackground(p.background);
-        setScale(p.scale);
-      })
-      .catch((error) => {
-        console.error("Failed to load project:", error);
-        setMessage("Could not load project.");
-      });
-  }, [params]);
+        setBackground(project.background);
+        setScale(project.scale);
+      } catch (error) {
+        console.error(
+          "Failed to load project:",
+          error,
+        );
+
+        if (!cancelled) {
+          setMessage(
+            "Could not load project.",
+          );
+        }
+      }
+    }
+
+    loadProject();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initialProjectId]);
 
   /*
-   * Lock page scrolling while plans dialog is open.
+   * Lock page scrolling while billing is open.
    */
   useEffect(() => {
     if (!billing) {
@@ -111,47 +148,77 @@ export default function EditorClient() {
   }, [billing]);
 
   /*
-   * Close plans dialog with Escape.
+   * Close billing dialog with Escape.
    */
   useEffect(() => {
     if (!billing) return;
 
-    const handleKeyDown = (event: KeyboardEvent) => {
+    function handleKeyDown(
+      event: KeyboardEvent,
+    ) {
       if (event.key === "Escape") {
         setBilling(false);
       }
-    };
+    }
 
-    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener(
+      "keydown",
+      handleKeyDown,
+    );
 
     return () => {
-      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener(
+        "keydown",
+        handleKeyDown,
+      );
     };
   }, [billing]);
 
   /*
    * Upload artwork.
    */
-  async function upload(
+  function upload(
     face: keyof FaceImages,
     file?: File,
   ) {
     if (!file) return;
 
     if (file.size > 3_000_000) {
-      setMessage("Keep each artwork image below 3 MB.");
+      setMessage(
+        "Keep each artwork image below 3 MB.",
+      );
+      return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+      setMessage(
+        "Please select an image file.",
+      );
       return;
     }
 
     const reader = new FileReader();
 
     reader.onload = () => {
+      if (typeof reader.result !== "string") {
+        setMessage(
+          "Could not read the image.",
+        );
+        return;
+      }
+
       setImages((current) => ({
         ...current,
-        [face]: reader.result as string,
+        [face]: reader.result,
       }));
 
       setMessage("");
+    };
+
+    reader.onerror = () => {
+      setMessage(
+        "Could not read the image.",
+      );
     };
 
     reader.readAsDataURL(file);
@@ -161,12 +228,15 @@ export default function EditorClient() {
    * Save project.
    */
   async function save() {
+    if (saving) return;
+
     setSaving(true);
     setMessage("");
 
     try {
       const body = {
-        name,
+        name:
+          name.trim() || "Untitled box",
         frontImage: images.front,
         rightImage: images.right,
         topImage: images.top,
@@ -174,39 +244,50 @@ export default function EditorClient() {
         scale,
       };
 
-      const res = await fetch(
+      const response = await fetch(
         projectId
           ? `/api/projects/${projectId}`
           : "/api/projects",
         {
           method: projectId ? "PUT" : "POST",
           headers: {
-            "Content-Type": "application/json",
+            "Content-Type":
+              "application/json",
           },
           body: JSON.stringify(body),
         },
       );
 
-      const data = await res.json();
+      const data = await response.json();
 
-      if (!res.ok) {
-        setMessage(data.error || "Could not save");
-        setSaving(false);
+      if (!response.ok) {
+        setMessage(
+          data.error ||
+            "Could not save project.",
+        );
+
         return;
       }
 
       if (!projectId) {
-        setProjectId(data.project.id);
+        const newProjectId =
+          data.project?.id;
 
-        router.replace(
-          `/editor?id=${data.project.id}`,
-        );
+        if (newProjectId) {
+          setProjectId(newProjectId);
+
+          router.replace(
+            `/editor?id=${newProjectId}`,
+          );
+        }
       }
 
       setMessage("Saved");
     } catch (error) {
       console.error(error);
-      setMessage("Could not save project.");
+      setMessage(
+        "Could not save project.",
+      );
     } finally {
       setSaving(false);
     }
@@ -218,17 +299,41 @@ export default function EditorClient() {
   async function remove() {
     if (!projectId) return;
 
-    if (!confirm("Delete this project?")) return;
+    const confirmed = window.confirm(
+      "Delete this project?",
+    );
+
+    if (!confirmed) return;
 
     try {
-      await fetch(`/api/projects/${projectId}`, {
-        method: "DELETE",
-      });
+      const response = await fetch(
+        `/api/projects/${projectId}`,
+        {
+          method: "DELETE",
+        },
+      );
+
+      if (!response.ok) {
+        const data =
+          await response
+            .json()
+            .catch(() => null);
+
+        setMessage(
+          data?.error ||
+            "Could not delete project.",
+        );
+
+        return;
+      }
 
       router.push("/dashboard");
     } catch (error) {
       console.error(error);
-      setMessage("Could not delete project.");
+
+      setMessage(
+        "Could not delete project.",
+      );
     }
   }
 
@@ -236,8 +341,13 @@ export default function EditorClient() {
    * Download PNG.
    */
   async function download() {
+    if (downloading) return;
+
     if (!projectId) {
-      setMessage("Save the project before downloading.");
+      setMessage(
+        "Save the project before downloading.",
+      );
+
       return;
     }
 
@@ -245,26 +355,32 @@ export default function EditorClient() {
     setMessage("");
 
     try {
-      const permission = await fetch("/api/downloads", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          projectId,
-        }),
-      });
+      const permissionResponse =
+        await fetch("/api/downloads", {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+          body: JSON.stringify({
+            projectId,
+          }),
+        });
 
-      const p = await permission.json();
+      const permission =
+        await permissionResponse.json();
 
-      if (!permission.ok) {
+      if (!permissionResponse.ok) {
         setMessage(
-          p.error || "Download unavailable",
+          permission.error ||
+            "Download unavailable.",
         );
 
         if (
-          permission.status === 402 ||
-          permission.status === 429
+          permissionResponse.status ===
+            402 ||
+          permissionResponse.status ===
+            429
         ) {
           setBilling(true);
         }
@@ -278,33 +394,53 @@ export default function EditorClient() {
         );
 
       if (!canvas) {
-        setMessage("Preview is not ready yet.");
+        setMessage(
+          "Preview is not ready yet.",
+        );
+
         return;
       }
 
-      const link = document.createElement("a");
-
-      link.download = `${
+      const safeName =
         name
-          .replace(/[^a-z0-9]+/gi, "-")
-          .toLowerCase() || "boxshot"
-      }.png`;
+          .replace(
+            /[^a-z0-9]+/gi,
+            "-",
+          )
+          .replace(
+            /^-+|-+$/g,
+            "",
+          )
+          .toLowerCase() ||
+        "boxshot";
 
-      link.href = canvas.toDataURL(
-        "image/png",
-        1,
-      );
+      const link =
+        document.createElement("a");
 
+      link.download = `${safeName}.png`;
+
+      link.href =
+        canvas.toDataURL(
+          "image/png",
+          1,
+        );
+
+      document.body.appendChild(link);
       link.click();
+      link.remove();
 
       setMessage(
-        p.downloadLimit === null
+        permission.downloadLimit ===
+          null
           ? "Downloaded — unlimited plan"
           : "Downloaded",
       );
     } catch (error) {
       console.error(error);
-      setMessage("Could not download the image.");
+
+      setMessage(
+        "Could not download the image.",
+      );
     } finally {
       setDownloading(false);
     }
@@ -315,22 +451,26 @@ export default function EditorClient() {
       <main className="min-h-screen bg-slate-100">
         {/* HEADER */}
         <header className="border-b bg-white">
-          <div className="mx-auto flex max-w-[1500px] items-center justify-between px-5 py-4">
-            <div className="flex items-center gap-3">
+          <div className="mx-auto flex max-w-[1500px] items-center justify-between gap-4 px-5 py-4">
+            <div className="flex min-w-0 items-center gap-3">
               <Link
                 href="/dashboard"
-                className="rounded-lg p-2 hover:bg-slate-100"
+                className="shrink-0 rounded-lg p-2 hover:bg-slate-100"
+                aria-label="Back to dashboard"
               >
                 <ArrowLeft size={18} />
               </Link>
 
-              <div>
+              <div className="min-w-0">
                 <input
                   value={name}
-                  onChange={(e) =>
-                    setName(e.target.value)
+                  onChange={(event) =>
+                    setName(
+                      event.target.value,
+                    )
                   }
                   className="w-48 bg-transparent font-bold outline-none sm:w-72"
+                  placeholder="Untitled box"
                 />
 
                 <p className="text-xs text-slate-400">
@@ -339,21 +479,25 @@ export default function EditorClient() {
               </div>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex shrink-0 gap-2">
               <button
+                type="button"
                 onClick={save}
                 disabled={saving}
-                className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Save size={16} />
 
-                {saving ? "Saving…" : "Save"}
+                {saving
+                  ? "Saving…"
+                  : "Save"}
               </button>
 
               <button
+                type="button"
                 onClick={download}
                 disabled={downloading}
-                className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Download size={16} />
 
@@ -374,73 +518,80 @@ export default function EditorClient() {
             </h2>
 
             <p className="mt-1 text-xs text-slate-500">
-              Upload images for the visible faces.
+              Upload images for the visible
+              faces.
             </p>
 
-            {/* FRONT */}
             <Face
               name="Front"
               value={images.front}
               onClick={() =>
-                fileRefs.front.current?.click()
+                frontFileRef.current?.click()
               }
             />
 
             <input
-              ref={fileRefs.front}
+              ref={frontFileRef}
               type="file"
               accept="image/*"
               hidden
-              onChange={(e) =>
+              onChange={(event) => {
                 upload(
                   "front",
-                  e.target.files?.[0],
-                )
-              }
+                  event.target.files?.[0],
+                );
+
+                event.currentTarget.value =
+                  "";
+              }}
             />
 
-            {/* RIGHT */}
             <Face
               name="Right side"
               value={images.right}
               onClick={() =>
-                fileRefs.right.current?.click()
+                rightFileRef.current?.click()
               }
             />
 
             <input
-              ref={fileRefs.right}
+              ref={rightFileRef}
               type="file"
               accept="image/*"
               hidden
-              onChange={(e) =>
+              onChange={(event) => {
                 upload(
                   "right",
-                  e.target.files?.[0],
-                )
-              }
+                  event.target.files?.[0],
+                );
+
+                event.currentTarget.value =
+                  "";
+              }}
             />
 
-            {/* TOP */}
             <Face
               name="Top"
               value={images.top}
               onClick={() =>
-                fileRefs.top.current?.click()
+                topFileRef.current?.click()
               }
             />
 
             <input
-              ref={fileRefs.top}
+              ref={topFileRef}
               type="file"
               accept="image/*"
               hidden
-              onChange={(e) =>
+              onChange={(event) => {
                 upload(
                   "top",
-                  e.target.files?.[0],
-                )
-              }
+                  event.target.files?.[0],
+                );
+
+                event.currentTarget.value =
+                  "";
+              }}
             />
 
             {/* SCALE */}
@@ -453,13 +604,19 @@ export default function EditorClient() {
                 max="1.4"
                 step="0.05"
                 value={scale}
-                onChange={(e) =>
+                onChange={(event) =>
                   setScale(
-                    Number(e.target.value),
+                    Number(
+                      event.target.value,
+                    ),
                   )
                 }
                 className="mt-3 w-full"
               />
+
+              <span className="mt-1 block text-xs font-normal text-slate-400">
+                {scale.toFixed(2)}x
+              </span>
             </label>
 
             {/* BACKGROUND */}
@@ -469,8 +626,10 @@ export default function EditorClient() {
               <input
                 type="color"
                 value={background}
-                onChange={(e) =>
-                  setBackground(e.target.value)
+                onChange={(event) =>
+                  setBackground(
+                    event.target.value,
+                  )
                 }
                 className="mt-3 h-10 w-full cursor-pointer rounded-lg"
               />
@@ -479,8 +638,9 @@ export default function EditorClient() {
             {/* DELETE */}
             {projectId && (
               <button
+                type="button"
                 onClick={remove}
-                className="mt-8 inline-flex items-center gap-2 text-sm font-semibold text-red-500"
+                className="mt-8 inline-flex items-center gap-2 text-sm font-semibold text-red-500 hover:text-red-600"
               >
                 <Trash2 size={16} />
                 Delete project
@@ -492,16 +652,19 @@ export default function EditorClient() {
           <section className="order-1 min-h-[620px] lg:order-2">
             <div
               ref={canvasWrap}
-              className="h-[620px] rounded-3xl overflow-hidden"
+              className="h-[620px] overflow-hidden rounded-3xl"
               style={{
                 background,
               }}
             >
               <BoxScene
                 images={{
-                  front: images?.front ?? null,
-                  right: images?.right ?? null,
-                  top: images?.top ?? null,
+                  front:
+                    images.front ?? null,
+                  right:
+                    images.right ?? null,
+                  top:
+                    images.top ?? null,
                 }}
                 scale={scale}
               />
@@ -522,13 +685,16 @@ export default function EditorClient() {
             </div>
 
             <p className="mt-2 text-sm leading-6 text-slate-500">
-              Save projects for free. A subscription
-              is required to export PNG downloads.
+              Save projects for free. A
+              subscription is required to
+              export PNG downloads.
             </p>
 
-            {/* OPEN PLANS DIALOG */}
             <button
-              onClick={() => setBilling(true)}
+              type="button"
+              onClick={() =>
+                setBilling(true)
+              }
               className="mt-4 w-full rounded-xl border px-4 py-3 text-sm font-semibold transition hover:border-indigo-400 hover:bg-indigo-50"
             >
               View plans
@@ -543,9 +709,7 @@ export default function EditorClient() {
         </div>
       </main>
 
-      {/* =====================================================
-          FULL-SCREEN BILLING DIALOG
-          ===================================================== */}
+      {/* BILLING DIALOG */}
       {billing && (
         <div
           className="fixed inset-0 z-[9999] flex items-center justify-center overflow-y-auto bg-slate-950/80 p-4 backdrop-blur-sm sm:p-6"
@@ -559,7 +723,6 @@ export default function EditorClient() {
           }}
         >
           <div className="relative my-auto w-full max-w-6xl overflow-hidden rounded-3xl border border-white/10 bg-white shadow-2xl">
-            {/* DIALOG HEADER */}
             <div className="flex items-start justify-between border-b bg-white px-5 py-5 sm:px-8 sm:py-6">
               <div>
                 <h2 className="text-xl font-black tracking-tight text-slate-950 sm:text-2xl">
@@ -567,13 +730,17 @@ export default function EditorClient() {
                 </h2>
 
                 <p className="mt-1 max-w-xl text-sm text-slate-500">
-                  Choose the download plan that works
-                  for your BoxShot projects.
+                  Choose the download plan that
+                  works for your BoxShot
+                  projects.
                 </p>
               </div>
 
               <button
-                onClick={() => setBilling(false)}
+                type="button"
+                onClick={() =>
+                  setBilling(false)
+                }
                 className="rounded-xl p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-900"
                 aria-label="Close plans"
               >
@@ -581,7 +748,6 @@ export default function EditorClient() {
               </button>
             </div>
 
-            {/* BILLING CARDS */}
             <div className="max-h-[calc(100vh-150px)] overflow-y-auto p-5 sm:p-8">
               <BillingCards />
             </div>
@@ -603,8 +769,9 @@ function Face({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      className="mt-4 flex w-full items-center gap-3 rounded-xl border p-3 text-left transition hover:border-indigo-400"
+      className="mt-4 flex w-full items-center gap-3 rounded-xl border p-3 text-left transition hover:border-indigo-400 hover:bg-slate-50"
     >
       <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-100">
         {value ? (
