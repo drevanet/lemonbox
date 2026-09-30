@@ -1,6 +1,6 @@
 const API_URL = "https://api.lemonsqueezy.com/v1";
 
-function getRequiredEnv(name: string) {
+function getRequiredEnv(name: string): string {
   const value = process.env[name];
 
   if (!value) {
@@ -10,29 +10,35 @@ function getRequiredEnv(name: string) {
   return value;
 }
 
-type LemonSqueezyResponse = {
-  data?: {
-    id: string;
-    type: string;
-
-    attributes?: {
-      url?: string;
-      email?: string;
-      name?: string;
-      store_id?: number;
-    };
-  };
-
-  errors?: Array<{
-    detail?: string;
-    title?: string;
-    status?: string;
-  }>;
+type LemonError = {
+  detail?: string;
+  title?: string;
+  status?: string;
 };
 
-/**
- * Lemon Squeezy customer sync options.
- */
+type LemonResponse<T = unknown> = {
+  data?: T;
+  errors?: LemonError[];
+};
+
+type LemonCheckout = {
+  id: string;
+  type: string;
+  attributes?: {
+    url?: string;
+  };
+};
+
+type LemonCustomer = {
+  id: string;
+  type: string;
+  attributes?: {
+    email?: string;
+    name?: string;
+    store_id?: number;
+  };
+};
+
 type SyncLemonCustomerOptions = {
   email: string;
   name?: string | null;
@@ -41,7 +47,7 @@ type SyncLemonCustomerOptions = {
 
 /**
  * Convert a Lemon Squeezy variant ID
- * into the application's internal plan.
+ * into your internal plan name.
  */
 export function planFromVariant(
   variantId: string | number | null | undefined,
@@ -84,6 +90,12 @@ export function planFromVariant(
 
 /**
  * Create a Lemon Squeezy checkout.
+ *
+ * Lemon Squeezy expects:
+ *
+ * data.attributes.checkout_data
+ *
+ * to be an OBJECT.
  */
 export async function createCheckout(
   userId: string,
@@ -91,19 +103,20 @@ export async function createCheckout(
   variantId: string,
   lemonCustomerId?: string | null,
 ) {
-  const apiKey = getRequiredEnv(
-    "LEMONSQUEEZY_API_KEY",
-  );
+  const apiKey =
+    getRequiredEnv("LEMONSQUEEZY_API_KEY");
 
-  const storeId = getRequiredEnv(
-    "LEMONSQUEEZY_STORE_ID",
-  );
+  const storeId =
+    getRequiredEnv("LEMONSQUEEZY_STORE_ID");
 
   const appUrl =
     process.env.NEXT_PUBLIC_APP_URL ||
     "http://localhost:3000";
 
-  const checkoutData: Record<string, unknown> = {
+  const checkoutData: Record<
+    string,
+    unknown
+  > = {
     custom: {
       user_id: userId,
     },
@@ -113,9 +126,17 @@ export async function createCheckout(
     checkoutData.email = email;
   }
 
+  /*
+   * Keep the Lemon customer ID in custom data.
+   *
+   * Do NOT use customer_id inside checkout_data.
+   */
   if (lemonCustomerId) {
-    checkoutData.customer_id =
-      Number(lemonCustomerId);
+    checkoutData.custom = {
+      user_id: userId,
+      lemon_customer_id:
+        lemonCustomerId,
+    };
   }
 
   const body = {
@@ -135,12 +156,17 @@ export async function createCheckout(
 
           receipt_button_text:
             "Go to Dashboard",
+
+          receipt_link_url:
+            `${appUrl}/dashboard`,
         },
 
         checkout_options: {
           media: true,
           logo: true,
           desc: true,
+          discount: true,
+          subscription_preview: true,
         },
       },
 
@@ -183,7 +209,7 @@ export async function createCheckout(
   );
 
   const result =
-    (await response.json()) as LemonSqueezyResponse;
+    (await response.json()) as LemonResponse<LemonCheckout>;
 
   if (!response.ok) {
     const detail =
@@ -202,45 +228,34 @@ export async function createCheckout(
     );
   }
 
-  const url =
+  const checkoutUrl =
     result.data?.attributes?.url;
 
-  if (!url) {
+  if (!checkoutUrl) {
     throw new Error(
       "Lemon Squeezy did not return a checkout URL.",
     );
   }
 
-  return url;
+  return checkoutUrl;
 }
 
 /**
  * Create or reuse a Lemon Squeezy customer.
- *
- * This matches calls such as:
- *
- * syncLemonCustomer({
- *   email: user.email,
- *   name: user.name,
- *   existingCustomerId: user.lemonCustomerId,
- * })
  */
 export async function syncLemonCustomer({
   email,
   name,
   existingCustomerId,
 }: SyncLemonCustomerOptions) {
-  const apiKey = getRequiredEnv(
-    "LEMONSQUEEZY_API_KEY",
-  );
+  const apiKey =
+    getRequiredEnv("LEMONSQUEEZY_API_KEY");
 
-  const storeId = getRequiredEnv(
-    "LEMONSQUEEZY_STORE_ID",
-  );
+  const storeId =
+    getRequiredEnv("LEMONSQUEEZY_STORE_ID");
 
   /*
-   * If the user already has a Lemon Squeezy
-   * customer ID, reuse it.
+   * Already linked to a Lemon customer.
    */
   if (existingCustomerId) {
     return existingCustomerId;
@@ -268,11 +283,8 @@ export async function syncLemonCustomer({
 
           attributes: {
             store_id: Number(storeId),
-
             name:
-              name?.trim() ||
-              email,
-
+              name?.trim() || email,
             email,
           },
         },
@@ -281,7 +293,7 @@ export async function syncLemonCustomer({
   );
 
   const result =
-    (await response.json()) as LemonSqueezyResponse;
+    (await response.json()) as LemonResponse<LemonCustomer>;
 
   if (!response.ok) {
     const detail =
