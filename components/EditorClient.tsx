@@ -3,15 +3,15 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import {
-  ArrowLeft,
-  Check,
-  Crown,
-  Download,
   ImagePlus,
-  Loader2,
   Save,
+  Download,
   Trash2,
-  X,
+  ArrowLeft,
+  Crown,
+  CheckCircle2,
+  CalendarDays,
+  Loader2,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -26,18 +26,15 @@ const BoxScene = dynamic(() => import("./BoxScene"), {
 type Project = {
   id: string;
   name: string;
-
   frontImage: string | null;
-  backImage: string | null;
-
   rightImage: string | null;
-  leftImage: string | null;
-
   topImage: string | null;
-  bottomImage: string | null;
-
   background: string;
   scale: number;
+};
+
+type EditorClientProps = {
+  projectId: string | null;
 };
 
 type Subscription = {
@@ -55,175 +52,40 @@ type BillingStatus = {
   subscription: Subscription | null;
 };
 
-type EditorClientProps = {
-  projectId?: string | null;
-};
-
-const PLAN_LIMITS: Record<string, number | null> = {
-  starter: 10,
-  basic: 20,
-  creator: 20,
-  pro: null,
-  studio: null,
-};
-
-function getPlanName(plan: string) {
-  switch (plan.toLowerCase()) {
-    case "starter":
-      return "Starter";
-
-    case "basic":
-      return "Creator";
-
-    case "creator":
-      return "Creator";
-
-    case "pro":
-      return "Studio";
-
-    case "studio":
-      return "Studio";
-
-    default:
-      return plan;
-  }
-}
-
-function getPlanLimit(plan: string) {
-  return PLAN_LIMITS[plan.toLowerCase()] ?? null;
-}
-
-function getStatusLabel(status: string) {
-  switch (status.toLowerCase()) {
-    case "active":
-      return "Active";
-
-    case "on_trial":
-      return "Trial";
-
-    case "paused":
-      return "Paused";
-
-    case "cancelled":
-      return "Cancelled";
-
-    case "expired":
-      return "Expired";
-
-    default:
-      return status;
-  }
-}
-
-function formatDate(date: string | null) {
-  if (!date) return null;
-
-  try {
-    return new Date(date).toLocaleDateString(
-      undefined,
-      {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-      },
-    );
-  } catch {
-    return null;
-  }
-}
-
-/*
- * Safely read JSON responses.
- *
- * This prevents:
- * "Failed to execute 'json' on 'Response':
- * Unexpected end of JSON input"
- */
-async function readResponse(
-  response: Response,
-): Promise<any> {
-  const text = await response.text();
-
-  if (!text.trim()) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    return {
-      error: text,
-    };
-  }
-}
-
 export default function EditorClient({
-  projectId,
+  projectId: initialProjectId,
 }: EditorClientProps) {
   const router = useRouter();
 
-  const canvasWrapperRef =
-    useRef<HTMLDivElement | null>(null);
+  const canvasWrap = useRef<HTMLDivElement>(null);
 
-  const frontInputRef =
-    useRef<HTMLInputElement | null>(null);
+  const fileRefs = {
+    front: useRef<HTMLInputElement>(null),
+    right: useRef<HTMLInputElement>(null),
+    top: useRef<HTMLInputElement>(null),
+  };
 
-  const backInputRef =
-    useRef<HTMLInputElement | null>(null);
+  const [projectId, setProjectId] = useState<string | null>(
+    initialProjectId,
+  );
 
-  const rightInputRef =
-    useRef<HTMLInputElement | null>(null);
+  const [name, setName] = useState("Untitled box");
 
-  const leftInputRef =
-    useRef<HTMLInputElement | null>(null);
+  const [images, setImages] = useState<FaceImages>({
+    front: null,
+    right: null,
+    top: null,
+  });
 
-  const topInputRef =
-    useRef<HTMLInputElement | null>(null);
+  const [background, setBackground] = useState("#eef2ff");
+  const [scale, setScale] = useState(1);
 
-  const bottomInputRef =
-    useRef<HTMLInputElement | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [downloading, setDownloading] = useState(false);
 
-  const [projectIdState, setProjectIdState] =
-    useState<string | null>(
-      projectId ?? null,
-    );
+  const [message, setMessage] = useState("");
 
-  const [name, setName] =
-    useState("Untitled box");
-
-  const [images, setImages] =
-    useState<FaceImages>({
-      front: null,
-      back: null,
-      right: null,
-      left: null,
-      top: null,
-      bottom: null,
-    });
-
-  const [background, setBackground] =
-    useState("#eef2ff");
-
-  const [scale, setScale] =
-    useState(1);
-
-  const [saving, setSaving] =
-    useState(false);
-
-  const [deleting, setDeleting] =
-    useState(false);
-
-  const [downloading, setDownloading] =
-    useState(false);
-
-  const [message, setMessage] =
-    useState("");
-
-  const [error, setError] =
-    useState("");
-
-  const [billing, setBilling] =
-    useState(false);
+  const [billing, setBilling] = useState(false);
 
   const [billingLoading, setBillingLoading] =
     useState(true);
@@ -232,282 +94,220 @@ export default function EditorClient({
     useState<BillingStatus | null>(null);
 
   /*
-   * LOAD PROJECT
+   * Load subscription status
    */
   useEffect(() => {
-    if (!projectId) {
-      setProjectIdState(null);
-      setName("Untitled box");
+    let cancelled = false;
 
-      setImages({
-        front: null,
-        back: null,
-        right: null,
-        left: null,
-        top: null,
-        bottom: null,
-      });
-
-      setBackground("#eef2ff");
-      setScale(1);
-
-      return;
-    }
-
-    async function loadProject() {
+    async function loadBillingStatus() {
       try {
-        setError("");
-
         const response = await fetch(
-          `/api/projects/${projectId}`,
+          "/api/billing/status",
           {
             cache: "no-store",
           },
         );
 
+        if (!response.ok) {
+          if (!cancelled) {
+            setBillingStatus({
+              subscribed: false,
+              subscription: null,
+            });
+          }
+
+          return;
+        }
+
         const data =
-          await readResponse(response);
+          (await response.json()) as BillingStatus;
+
+        if (!cancelled) {
+          setBillingStatus(data);
+        }
+      } catch (error) {
+        console.error(
+          "Billing status error:",
+          error,
+        );
+
+        if (!cancelled) {
+          setBillingStatus({
+            subscribed: false,
+            subscription: null,
+          });
+        }
+      } finally {
+        if (!cancelled) {
+          setBillingLoading(false);
+        }
+      }
+    }
+
+    loadBillingStatus();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /*
+   * Load project
+   */
+  useEffect(() => {
+    if (!initialProjectId) return;
+
+    let cancelled = false;
+
+    async function loadProject() {
+      try {
+        const response = await fetch(
+          `/api/projects/${initialProjectId}`,
+        );
+
+        const data = await response.json();
 
         if (!response.ok) {
-          throw new Error(
+          setMessage(
             data.error ||
-              "Unable to load project.",
+              "Could not load project.",
           );
+
+          return;
         }
 
-        const project: Project =
+        const project: Project | undefined =
           data.project;
 
-        if (!project) {
-          throw new Error(
-            "Project data was not returned.",
-          );
-        }
+        if (!project || cancelled) return;
 
-        setProjectIdState(project.id);
-
-        setName(
-          project.name ||
-            "Untitled box",
-        );
+        setProjectId(project.id);
+        setName(project.name);
 
         setImages({
-          front:
-            project.frontImage ??
-            null,
-
-          back:
-            project.backImage ??
-            null,
-
-          right:
-            project.rightImage ??
-            null,
-
-          left:
-            project.leftImage ??
-            null,
-
-          top:
-            project.topImage ??
-            null,
-
-          bottom:
-            project.bottomImage ??
-            null,
+          front: project.frontImage,
+          right: project.rightImage,
+          top: project.topImage,
         });
 
-        setBackground(
-          project.background ||
-            "#eef2ff",
-        );
-
-        setScale(
-          project.scale || 1,
-        );
-      } catch (err) {
+        setBackground(project.background);
+        setScale(project.scale);
+      } catch (error) {
         console.error(
           "Load project error:",
-          err,
+          error,
         );
 
-        setError(
-          err instanceof Error
-            ? err.message
-            : "Unable to load project.",
-        );
+        if (!cancelled) {
+          setMessage(
+            "Could not load project.",
+          );
+        }
       }
     }
 
     loadProject();
-  }, [projectId]);
+
+    return () => {
+      cancelled = true;
+    };
+  }, [initialProjectId]);
 
   /*
-   * LOAD BILLING STATUS
+   * Upload artwork
    */
-  async function loadBillingStatus() {
+  async function upload(
+    face: keyof FaceImages,
+    file?: File,
+  ) {
+    if (!file) return;
+
+    if (file.size > 3_000_000) {
+      setMessage(
+        "Keep each artwork image below 3 MB.",
+      );
+
+      return;
+    }
+
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      setImages((current) => ({
+        ...current,
+        [face]: reader.result as string,
+      }));
+
+      setMessage("");
+    };
+
+    reader.onerror = () => {
+      setMessage(
+        "Could not read that image.",
+      );
+    };
+
+    reader.readAsDataURL(file);
+  }
+
+  /*
+   * Save project
+   */
+  async function save() {
+    setSaving(true);
+    setMessage("");
+
     try {
-      setBillingLoading(true);
+      const body = {
+        name,
+        frontImage: images.front,
+        rightImage: images.right,
+        topImage: images.top,
+        background,
+        scale,
+      };
 
       const response = await fetch(
-        "/api/billing/status",
+        projectId
+          ? `/api/projects/${projectId}`
+          : "/api/projects",
         {
-          cache: "no-store",
+          method: projectId ? "PUT" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(body),
         },
       );
 
-      const data =
-        await readResponse(response);
+      const data = await response.json();
 
-      /*
-       * If the API returns unauthorized,
-       * don't crash the editor.
-       */
-      if (
-        response.status === 401
-      ) {
-        setBillingStatus({
-          subscribed: false,
-          subscription: null,
-        });
+      if (!response.ok) {
+        setMessage(
+          data.error ||
+            "Could not save the project.",
+        );
 
         return;
       }
 
-      if (!response.ok) {
-        throw new Error(
-          data.error ||
-            "Unable to load billing status.",
+      if (!projectId && data.project?.id) {
+        setProjectId(data.project.id);
+
+        router.replace(
+          `/editor?id=${data.project.id}`,
         );
       }
 
-      setBillingStatus({
-        subscribed:
-          Boolean(
-            data.subscribed,
-          ),
-
-        subscription:
-          data.subscription ??
-          null,
-      });
-    } catch (err) {
-      console.error(
-        "Billing status error:",
-        err,
-      );
-
-      setBillingStatus({
-        subscribed: false,
-        subscription: null,
-      });
-    } finally {
-      setBillingLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    loadBillingStatus();
-  }, []);
-
-  /*
-   * SAVE PROJECT
-   */
-  async function saveProject() {
-    try {
-      setSaving(true);
-      setMessage("");
-      setError("");
-
-      const payload = {
-        name,
-
-        frontImage:
-          images.front,
-
-        backImage:
-          images.back,
-
-        rightImage:
-          images.right,
-
-        leftImage:
-          images.left,
-
-        topImage:
-          images.top,
-
-        bottomImage:
-          images.bottom,
-
-        background,
-
-        scale,
-      };
-
-      const url =
-        projectIdState
-          ? `/api/projects/${projectIdState}`
-          : "/api/projects";
-
-      const method =
-        projectIdState
-          ? "PUT"
-          : "POST";
-
-      const response =
-        await fetch(url, {
-          method,
-
-          headers: {
-            "Content-Type":
-              "application/json",
-          },
-
-          body: JSON.stringify(
-            payload,
-          ),
-        });
-
-      const data =
-        await readResponse(response);
-
-      if (!response.ok) {
-        throw new Error(
-          data.error ||
-            "Unable to save project.",
-        );
-      }
-
-      if (data.project?.id) {
-        setProjectIdState(
-          data.project.id,
-        );
-
-        if (!projectIdState) {
-          router.replace(
-            `/editor?id=${data.project.id}`,
-          );
-        }
-      }
-
-      setMessage(
-        "Design saved successfully.",
-      );
-
-      setTimeout(() => {
-        setMessage("");
-      }, 3000);
-    } catch (err) {
+      setMessage("Saved");
+    } catch (error) {
       console.error(
         "Save project error:",
-        err,
+        error,
       );
 
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to save project.",
+      setMessage(
+        "Could not save the project.",
       );
     } finally {
       setSaving(false);
@@ -515,277 +315,163 @@ export default function EditorClient({
   }
 
   /*
-   * DELETE PROJECT
+   * Delete project
    */
-  async function deleteProject() {
-    if (!projectIdState) {
-      return;
-    }
+  async function remove() {
+    if (!projectId) return;
 
-    const confirmed =
-      window.confirm(
-        "Are you sure you want to delete this project?",
-      );
+    const confirmed = window.confirm(
+      "Delete this project?",
+    );
 
-    if (!confirmed) {
-      return;
-    }
+    if (!confirmed) return;
 
     try {
-      setDeleting(true);
-      setError("");
-
-      const response =
-        await fetch(
-          `/api/projects/${projectIdState}`,
-          {
-            method: "DELETE",
-          },
-        );
-
-      const data =
-        await readResponse(response);
+      const response = await fetch(
+        `/api/projects/${projectId}`,
+        {
+          method: "DELETE",
+        },
+      );
 
       if (!response.ok) {
-        throw new Error(
+        const data = await response.json();
+
+        setMessage(
           data.error ||
-            "Unable to delete project.",
+            "Could not delete the project.",
         );
+
+        return;
       }
 
-      router.push(
-        "/dashboard",
-      );
-    } catch (err) {
+      router.push("/dashboard");
+    } catch (error) {
       console.error(
         "Delete project error:",
-        err,
+        error,
       );
 
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to delete project.",
+      setMessage(
+        "Could not delete the project.",
       );
-    } finally {
-      setDeleting(false);
     }
   }
 
   /*
-   * IMAGE UPLOAD
+   * Download PNG
    */
-  function handleUpload(
-    face: keyof FaceImages,
-    file: File | undefined,
-  ) {
-    if (!file) {
-      return;
-    }
-
-    setError("");
-
-    const allowedTypes = [
-      "image/png",
-      "image/jpeg",
-      "image/webp",
-    ];
-
-    if (
-      !allowedTypes.includes(
-        file.type,
-      )
-    ) {
-      setError(
-        "Please upload a PNG, JPG or WebP image.",
+  async function download() {
+    if (!projectId) {
+      setMessage(
+        "Save the project before downloading.",
       );
 
       return;
     }
 
-    if (
-      file.size >
-      3 * 1024 * 1024
-    ) {
-      setError(
-        "Each image must be smaller than 3 MB.",
-      );
+    setDownloading(true);
+    setMessage("");
 
-      return;
-    }
-
-    const reader =
-      new FileReader();
-
-    reader.onload = () => {
-      const result =
-        reader.result;
-
-      if (
-        typeof result !==
-        "string"
-      ) {
-        setError(
-          "Unable to read the image.",
-        );
-
-        return;
-      }
-
-      setImages(
-        (current) => ({
-          ...current,
-
-          [face]: result,
-        }),
-      );
-    };
-
-    reader.onerror = () => {
-      setError(
-        "Unable to read the image.",
-      );
-    };
-
-    reader.readAsDataURL(
-      file,
-    );
-  }
-
-  /*
-   * REMOVE IMAGE
-   */
-  function removeImage(
-    face: keyof FaceImages,
-  ) {
-    setImages(
-      (current) => ({
-        ...current,
-        [face]: null,
-      }),
-    );
-  }
-
-  /*
-   * DOWNLOAD PNG
-   */
-  async function downloadImage() {
     try {
-      setDownloading(true);
-      setError("");
-
-      /*
-       * Ask server whether the
-       * user can download.
-       */
-      const response =
-        await fetch(
-          "/api/downloads",
-          {
-            method: "POST",
-
-            headers: {
-              "Content-Type":
-                "application/json",
-            },
+      const permission = await fetch(
+        "/api/downloads",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
           },
+          body: JSON.stringify({
+            projectId,
+          }),
+        },
+      );
+
+      const permissionData =
+        await permission.json();
+
+      if (!permission.ok) {
+        setMessage(
+          permissionData.error ||
+            "Download unavailable.",
         );
 
-      const data =
-        await readResponse(response);
-
-      /*
-       * 402 = subscription required
-       * 429 = download limit reached
-       */
-      if (
-        response.status === 402 ||
-        response.status === 429
-      ) {
-        setBilling(true);
-
-        await loadBillingStatus();
+        if (
+          permission.status === 402 ||
+          permission.status === 429
+        ) {
+          setBilling(true);
+        }
 
         return;
       }
-
-      if (!response.ok) {
-        throw new Error(
-          data.error ||
-            "Unable to start download.",
-        );
-      }
-
-      /*
-       * Give Three.js time to
-       * finish rendering.
-       */
-      await new Promise(
-        (resolve) =>
-          setTimeout(
-            resolve,
-            300,
-          ),
-      );
 
       const canvas =
-        canvasWrapperRef.current?.querySelector(
+        canvasWrap.current?.querySelector(
           "canvas",
         );
 
       if (!canvas) {
-        throw new Error(
-          "3D canvas was not found.",
+        setMessage(
+          "Preview is not ready yet.",
         );
+
+        return;
       }
 
-      const image =
-        canvas.toDataURL(
-          "image/png",
-          1,
-        );
-
       const link =
-        document.createElement(
-          "a",
-        );
-
-      link.href = image;
+        document.createElement("a");
 
       link.download =
-        `${name || "boxshot"}.png`;
+        `${
+          name
+            .replace(/[^a-z0-9]+/gi, "-")
+            .toLowerCase() ||
+          "boxshot"
+        }.png`;
 
-      document.body.appendChild(
-        link,
+      link.href = canvas.toDataURL(
+        "image/png",
+        1,
       );
 
       link.click();
 
-      link.remove();
+      setMessage(
+        permissionData.downloadLimit === null
+          ? "Downloaded — unlimited plan"
+          : "Downloaded",
+      );
 
       /*
-       * Refresh usage after
-       * successful download.
+       * Refresh subscription usage
+       * after successful download.
        */
-      await loadBillingStatus();
+      try {
+        const response = await fetch(
+          "/api/billing/status",
+          {
+            cache: "no-store",
+          },
+        );
 
-      setMessage(
-        "PNG downloaded successfully.",
-      );
+        if (response.ok) {
+          const data =
+            (await response.json()) as BillingStatus;
 
-      setTimeout(() => {
-        setMessage("");
-      }, 3000);
-    } catch (err) {
+          setBillingStatus(data);
+        }
+      } catch {
+        // Download already succeeded.
+      }
+    } catch (error) {
       console.error(
         "Download error:",
-        err,
+        error,
       );
 
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Unable to download image.",
+      setMessage(
+        "Could not download the PNG.",
       );
     } finally {
       setDownloading(false);
@@ -793,634 +479,535 @@ export default function EditorClient({
   }
 
   /*
-   * FACE UPLOAD COMPONENT
+   * Convert database plan name
+   * into display name.
    */
-  function FaceUpload({
-    label,
-    face,
-    inputRef,
-  }: {
-    label: string;
-    face: keyof FaceImages;
-    inputRef: React.RefObject<
-      HTMLInputElement | null
-    >;
-  }) {
-    const image =
-      images[face];
+  function formatPlan(plan: string) {
+    const names: Record<string, string> = {
+      starter: "Starter",
+      basic: "Creator",
+      creator: "Creator",
+      pro: "Studio",
+      studio: "Studio",
+    };
 
     return (
-      <div className="rounded-xl border border-slate-200 bg-white p-3">
-        <div className="mb-2 flex items-center justify-between">
-          <span className="text-sm font-bold text-slate-800">
-            {label}
-          </span>
-
-          {image && (
-            <button
-              type="button"
-              onClick={() =>
-                removeImage(face)
-              }
-              className="rounded-lg p-1 text-slate-400 hover:bg-red-50 hover:text-red-600"
-              title={`Remove ${label}`}
-            >
-              <X size={15} />
-            </button>
-          )}
-        </div>
-
-        <button
-          type="button"
-          onClick={() =>
-            inputRef.current?.click()
-          }
-          className="group relative flex h-24 w-full items-center justify-center overflow-hidden rounded-lg border border-dashed border-slate-300 bg-slate-50 transition hover:border-indigo-400 hover:bg-indigo-50"
-        >
-          {image ? (
-            <img
-              src={image}
-              alt={`${label} preview`}
-              className="h-full w-full object-cover"
-            />
-          ) : (
-            <div className="flex flex-col items-center gap-1 text-slate-400">
-              <ImagePlus size={22} />
-
-              <span className="text-xs font-medium">
-                Upload image
-              </span>
-            </div>
-          )}
-        </button>
-
-        <input
-          ref={inputRef}
-          type="file"
-          accept="image/png,image/jpeg,image/webp"
-          className="hidden"
-          onChange={(event) => {
-            handleUpload(
-              face,
-              event.target.files?.[0],
-            );
-
-            event.target.value =
-              "";
-          }}
-        />
-      </div>
+      names[plan.toLowerCase()] ||
+      plan.charAt(0).toUpperCase() +
+        plan.slice(1)
     );
   }
 
   /*
-   * SUBSCRIPTION DATA
+   * Format subscription status
    */
+  function formatStatus(status: string) {
+    const names: Record<string, string> = {
+      active: "Active",
+      on_trial: "Trial",
+      paused: "Paused",
+      cancelled: "Cancelled",
+      expired: "Expired",
+    };
+
+    return (
+      names[status.toLowerCase()] ||
+      status
+    );
+  }
+
+  /*
+   * Format dates
+   */
+  function formatDate(
+    date: string | null,
+  ) {
+    if (!date) return null;
+
+    const parsed = new Date(date);
+
+    if (Number.isNaN(parsed.getTime())) {
+      return null;
+    }
+
+    return parsed.toLocaleDateString(
+      undefined,
+      {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      },
+    );
+  }
+
+  /*
+   * Download limits
+   */
+  function getDownloadLimit(
+    plan: string,
+  ): number | null {
+    const normalized =
+      plan.toLowerCase();
+
+    if (normalized === "starter") {
+      return 10;
+    }
+
+    if (
+      normalized === "basic" ||
+      normalized === "creator"
+    ) {
+      return 20;
+    }
+
+    if (
+      normalized === "pro" ||
+      normalized === "studio"
+    ) {
+      return null;
+    }
+
+    return null;
+  }
+
   const subscription =
     billingStatus?.subscription;
 
-  const planName =
+  const isSubscribed =
+    billingStatus?.subscribed === true &&
+    !!subscription;
+
+  const downloadLimit =
     subscription
-      ? getPlanName(
+      ? getDownloadLimit(
           subscription.plan,
         )
       : null;
-
-  const planLimit =
-    subscription
-      ? getPlanLimit(
-          subscription.plan,
-        )
-      : null;
-
-  const downloadsUsed =
-    subscription
-      ?.downloadsUsed ?? 0;
-
-  const usageText =
-    planLimit === null
-      ? `${downloadsUsed} downloads`
-      : `${downloadsUsed} / ${planLimit} downloads`;
-
-  const usagePercent =
-    planLimit === null
-      ? 0
-      : Math.min(
-          100,
-          (downloadsUsed /
-            planLimit) *
-            100,
-        );
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-950">
+    <main className="min-h-screen bg-slate-100">
       {/* HEADER */}
-
-      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
-        <div className="flex h-16 items-center justify-between px-4 lg:px-6">
+      <header className="border-b bg-white">
+        <div className="mx-auto flex max-w-[1500px] items-center justify-between px-5 py-4">
           <div className="flex items-center gap-3">
             <Link
               href="/dashboard"
-              className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
+              className="rounded-lg p-2 hover:bg-slate-100"
             >
-              <ArrowLeft size={20} />
+              <ArrowLeft size={18} />
             </Link>
 
             <div>
-              <div className="text-lg font-black tracking-tight">
-                BoxShot
-                <span className="text-indigo-600">
-                  .
-                </span>
-              </div>
+              <input
+                value={name}
+                onChange={(event) =>
+                  setName(event.target.value)
+                }
+                className="w-48 bg-transparent font-bold outline-none sm:w-72"
+              />
 
-              <div className="text-xs text-slate-400">
+              <p className="text-xs text-slate-400">
                 3D BoxShot Editor
-              </div>
+              </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {message && (
-              <div className="hidden rounded-lg bg-green-50 px-3 py-2 text-sm font-medium text-green-700 sm:block">
-                {message}
-              </div>
-            )}
-
+          <div className="flex gap-2">
             <button
               type="button"
-              onClick={saveProject}
+              onClick={save}
               disabled={saving}
-              className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2.5 text-sm font-bold text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-xl border bg-white px-4 py-2 text-sm font-semibold disabled:opacity-50"
             >
-              {saving ? (
-                <Loader2
-                  size={17}
-                  className="animate-spin"
-                />
-              ) : (
-                <Save size={17} />
-              )}
+              <Save size={16} />
 
               {saving
-                ? "Saving..."
+                ? "Saving…"
                 : "Save"}
             </button>
 
             <button
               type="button"
-              onClick={
-                downloadImage
-              }
-              disabled={
-                downloading
-              }
-              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={download}
+              disabled={downloading}
+              className="inline-flex items-center gap-2 rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
             >
-              {downloading ? (
-                <Loader2
-                  size={17}
-                  className="animate-spin"
-                />
-              ) : (
-                <Download size={17} />
-              )}
+              <Download size={16} />
 
               {downloading
-                ? "Preparing..."
+                ? "Preparing…"
                 : "Download PNG"}
             </button>
           </div>
         </div>
       </header>
 
-      {/* ERROR */}
+      {/* MAIN EDITOR */}
+      <div className="mx-auto grid max-w-[1500px] gap-5 p-5 lg:grid-cols-[280px_1fr_280px]">
+        {/* ARTWORK SIDEBAR */}
+        <aside className="order-2 rounded-2xl border bg-white p-5 lg:order-1">
+          <h2 className="font-bold">
+            Artwork
+          </h2>
 
-      {error && (
-        <div className="border-b border-red-200 bg-red-50 px-4 py-3 text-center text-sm font-medium text-red-700">
-          {error}
-        </div>
-      )}
+          <p className="mt-1 text-xs text-slate-500">
+            Upload images for the visible
+            faces.
+          </p>
 
-      {/* MAIN */}
+          <Face
+            name="Front"
+            value={images.front}
+            onClick={() =>
+              fileRefs.front.current?.click()
+            }
+          />
 
-      <main className="grid min-h-[calc(100vh-65px)] grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)_300px]">
-        {/* LEFT SIDEBAR */}
+          <input
+            ref={fileRefs.front}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(event) =>
+              upload(
+                "front",
+                event.target.files?.[0],
+              )
+            }
+          />
 
-        <aside className="border-b border-slate-200 bg-white p-4 lg:border-b-0 lg:border-r">
-          <div className="mb-5">
-            <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-400">
-              Project name
-            </label>
+          <Face
+            name="Right side"
+            value={images.right}
+            onClick={() =>
+              fileRefs.right.current?.click()
+            }
+          />
+
+          <input
+            ref={fileRefs.right}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(event) =>
+              upload(
+                "right",
+                event.target.files?.[0],
+              )
+            }
+          />
+
+          <Face
+            name="Top"
+            value={images.top}
+            onClick={() =>
+              fileRefs.top.current?.click()
+            }
+          />
+
+          <input
+            ref={fileRefs.top}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(event) =>
+              upload(
+                "top",
+                event.target.files?.[0],
+              )
+            }
+          />
+
+          {/* SCALE */}
+          <label className="mt-6 block text-sm font-semibold">
+            Box scale
 
             <input
-              value={name}
+              type="range"
+              min="0.7"
+              max="1.4"
+              step="0.05"
+              value={scale}
               onChange={(event) =>
-                setName(
+                setScale(
+                  Number(
+                    event.target.value,
+                  ),
+                )
+              }
+              className="mt-3 w-full"
+            />
+          </label>
+
+          {/* BACKGROUND */}
+          <label className="mt-5 block text-sm font-semibold">
+            Background
+
+            <input
+              type="color"
+              value={background}
+              onChange={(event) =>
+                setBackground(
                   event.target.value,
                 )
               }
-              className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm font-semibold outline-none transition focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-              placeholder="Untitled box"
+              className="mt-3 h-10 w-full cursor-pointer rounded-lg"
             />
-          </div>
+          </label>
 
-          <div className="mb-3">
-            <h2 className="text-sm font-black text-slate-900">
-              Box faces
-            </h2>
-
-            <p className="mt-1 text-xs text-slate-500">
-              Upload artwork for each side of your box.
-            </p>
-          </div>
-
-          <div className="space-y-3">
-            <FaceUpload
-              label="Front"
-              face="front"
-              inputRef={
-                frontInputRef
-              }
-            />
-
-            <FaceUpload
-              label="Back"
-              face="back"
-              inputRef={
-                backInputRef
-              }
-            />
-
-            <FaceUpload
-              label="Right"
-              face="right"
-              inputRef={
-                rightInputRef
-              }
-            />
-
-            <FaceUpload
-              label="Left"
-              face="left"
-              inputRef={
-                leftInputRef
-              }
-            />
-
-            <FaceUpload
-              label="Top"
-              face="top"
-              inputRef={
-                topInputRef
-              }
-            />
-
-            <FaceUpload
-              label="Bottom"
-              face="bottom"
-              inputRef={
-                bottomInputRef
-              }
-            />
-          </div>
+          {/* DELETE */}
+          {projectId && (
+            <button
+              type="button"
+              onClick={remove}
+              className="mt-8 inline-flex items-center gap-2 text-sm font-semibold text-red-500"
+            >
+              <Trash2 size={16} />
+              Delete project
+            </button>
+          )}
         </aside>
 
         {/* 3D PREVIEW */}
-
-        <section className="relative min-h-[600px] bg-slate-200">
+        <section className="order-1 min-h-[620px] lg:order-2">
           <div
-            ref={
-              canvasWrapperRef
-            }
-            className="absolute inset-0"
+            ref={canvasWrap}
+            className="h-[620px] rounded-3xl"
+            style={{
+              background,
+            }}
           >
             <BoxScene
               images={images}
               scale={scale}
             />
           </div>
-
-          <div className="absolute bottom-4 left-1/2 z-10 -translate-x-1/2 rounded-full border border-white/60 bg-white/90 px-4 py-2 text-xs font-semibold text-slate-500 shadow-lg backdrop-blur">
-            Drag to rotate • Scroll to zoom
-          </div>
         </section>
 
-        {/* RIGHT SIDEBAR */}
+        {/* DOWNLOAD / SUBSCRIPTION */}
+        <aside className="order-3 h-fit rounded-2xl border bg-white p-5">
+          <div className="flex items-center gap-2">
+            <Crown
+              size={18}
+              className="text-indigo-500"
+            />
 
-        <aside className="border-t border-slate-200 bg-white p-4 lg:border-l lg:border-t-0">
-          <div>
-            <h2 className="text-sm font-black text-slate-900">
-              Settings
+            <h2 className="font-bold">
+              Downloads
             </h2>
-
-            {/* BACKGROUND */}
-
-            <div className="mt-4">
-              <label className="mb-2 block text-xs font-bold uppercase tracking-wider text-slate-400">
-                Background
-              </label>
-
-              <div className="flex items-center gap-3">
-                <input
-                  type="color"
-                  value={
-                    background
-                  }
-                  onChange={(
-                    event,
-                  ) =>
-                    setBackground(
-                      event.target.value,
-                    )
-                  }
-                  className="h-10 w-12 cursor-pointer rounded-lg border border-slate-200 bg-white p-1"
-                />
-
-                <input
-                  value={
-                    background
-                  }
-                  onChange={(
-                    event,
-                  ) =>
-                    setBackground(
-                      event.target.value,
-                    )
-                  }
-                  className="min-w-0 flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium uppercase outline-none focus:border-indigo-500"
-                />
-              </div>
-            </div>
-
-            {/* SCALE */}
-
-            <div className="mt-5">
-              <div className="mb-2 flex items-center justify-between">
-                <label className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Box scale
-                </label>
-
-                <span className="text-xs font-bold text-slate-600">
-                  {scale.toFixed(
-                    2,
-                  )}
-                  x
-                </span>
-              </div>
-
-              <input
-                type="range"
-                min="0.6"
-                max="1.5"
-                step="0.05"
-                value={scale}
-                onChange={(
-                  event,
-                ) =>
-                  setScale(
-                    Number(
-                      event.target.value,
-                    ),
-                  )
-                }
-                className="w-full accent-indigo-600"
-              />
-            </div>
           </div>
 
-          {/* SUBSCRIPTION */}
-
-          <div className="mt-8">
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-black text-slate-900">
-                Subscription
-              </h2>
-
-              <Crown
-                size={17}
-                className="text-indigo-600"
+          {/* CHECKING STATUS */}
+          {billingLoading ? (
+            <div className="mt-5 flex items-center gap-2 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">
+              <Loader2
+                size={16}
+                className="animate-spin"
               />
+
+              Checking subscription…
             </div>
+          ) : isSubscribed &&
+            subscription ? (
+            <>
+              {/* ACTIVE SUBSCRIPTION */}
+              <div className="mt-4 rounded-2xl border border-indigo-100 bg-indigo-50 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-indigo-500">
+                      Current plan
+                    </p>
 
-            {billingLoading ? (
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">
-                <div className="flex items-center gap-2 text-sm text-slate-500">
-                  <Loader2
-                    size={17}
-                    className="animate-spin"
-                  />
-
-                  Loading subscription...
-                </div>
-              </div>
-            ) : billingStatus?.subscribed &&
-              subscription ? (
-              /*
-               * SUBSCRIBED
-               */
-
-              <button
-                type="button"
-                onClick={() =>
-                  setBilling(
-                    true,
-                  )
-                }
-                className="w-full text-left"
-              >
-                <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4 transition hover:border-indigo-400 hover:bg-indigo-100">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-xs font-bold uppercase tracking-wider text-indigo-500">
-                        Current plan
-                      </div>
-
-                      <div className="mt-1 text-xl font-black text-slate-950">
-                        {planName}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1 rounded-full bg-green-100 px-2.5 py-1 text-xs font-bold text-green-700">
-                      <Check size={12} />
-
-                      {getStatusLabel(
-                        subscription.status,
+                    <h3 className="mt-1 text-xl font-black text-slate-900">
+                      {formatPlan(
+                        subscription.plan,
                       )}
-                    </div>
+                    </h3>
                   </div>
 
-                  {/* DOWNLOAD USAGE */}
+                  {/* STATUS */}
+                  <div className="flex items-center gap-1 rounded-full bg-white px-2.5 py-1 text-xs font-bold text-green-600">
+                    <CheckCircle2
+                      size={13}
+                    />
 
-                  <div className="mt-4">
-                    <div className="flex items-center justify-between text-xs font-semibold text-slate-600">
-                      <span>
-                        Downloads
-                      </span>
-
-                      <span>
-                        {usageText}
-                      </span>
-                    </div>
-
-                    {planLimit !==
-                      null && (
-                      <div className="mt-2 h-2 overflow-hidden rounded-full bg-white">
-                        <div
-                          className="h-full rounded-full bg-indigo-600 transition-all"
-                          style={{
-                            width: `${usagePercent}%`,
-                          }}
-                        />
-                      </div>
+                    {formatStatus(
+                      subscription.status,
                     )}
                   </div>
+                </div>
 
-                  {/* RENEWAL */}
+                {/* DOWNLOAD USAGE */}
+                <div className="mt-5">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="font-semibold text-slate-700">
+                      Downloads
+                    </span>
 
-                  {subscription.renewsAt && (
-                    <div className="mt-4 border-t border-indigo-200 pt-3 text-xs text-slate-500">
-                      Renews{" "}
-                      <span className="font-bold text-slate-700">
-                        {formatDate(
-                          subscription.renewsAt,
-                        )}
-                      </span>
+                    <span className="font-bold text-slate-900">
+                      {subscription.downloadsUsed}
+
+                      {downloadLimit === null
+                        ? " / Unlimited"
+                        : ` / ${downloadLimit}`}
+                    </span>
+                  </div>
+
+                  {downloadLimit !== null && (
+                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-white">
+                      <div
+                        className="h-full rounded-full bg-indigo-600 transition-all"
+                        style={{
+                          width: `${Math.min(
+                            100,
+                            (subscription.downloadsUsed /
+                              downloadLimit) *
+                              100,
+                          )}%`,
+                        }}
+                      />
                     </div>
                   )}
-
-                  <div className="mt-3 text-xs font-bold text-indigo-600">
-                    Change plan →
-                  </div>
                 </div>
+
+                {/* RENEWAL DATE */}
+                {subscription.renewsAt && (
+                  <div className="mt-4 flex items-center gap-2 text-xs text-slate-500">
+                    <CalendarDays
+                      size={14}
+                    />
+
+                    <span>
+                      Renews{" "}
+                      {formatDate(
+                        subscription.renewsAt,
+                      )}
+                    </span>
+                  </div>
+                )}
+
+                {/* END DATE */}
+                {subscription.endsAt && (
+                  <div className="mt-2 text-xs text-slate-500">
+                    Ends{" "}
+                    {formatDate(
+                      subscription.endsAt,
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <p className="mt-3 text-xs leading-5 text-slate-400">
+                Your subscription is active.
+                Your download allowance is
+                reset according to your billing
+                period.
+              </p>
+
+              {/* CHANGE PLAN */}
+              <button
+                type="button"
+                onClick={() =>
+                  setBilling(
+                    (value) => !value,
+                  )
+                }
+                className="mt-4 w-full rounded-xl border px-4 py-3 text-sm font-semibold hover:bg-slate-50"
+              >
+                {billing
+                  ? "Hide plans"
+                  : "Change plan"}
               </button>
-            ) : (
-              /*
-               * NOT SUBSCRIBED
-               */
+
+              {billing && (
+                <div className="mt-5">
+                  <BillingCards />
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              {/* NO ACTIVE SUBSCRIPTION */}
+              <p className="mt-2 text-sm leading-6 text-slate-500">
+                Save projects for free. A
+                subscription is required to
+                export PNG downloads.
+              </p>
 
               <button
                 type="button"
                 onClick={() =>
                   setBilling(
-                    true,
+                    (value) => !value,
                   )
                 }
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 p-4 text-left transition hover:border-indigo-300 hover:bg-indigo-50"
+                className="mt-4 w-full rounded-xl border px-4 py-3 text-sm font-semibold hover:bg-slate-50"
               >
-                <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Current plan
-                </div>
-
-                <div className="mt-1 text-xl font-black text-slate-950">
-                  Free
-                </div>
-
-                <p className="mt-2 text-xs leading-5 text-slate-500">
-                  Choose a subscription
-                  to unlock downloads
-                  and additional usage.
-                </p>
-
-                <div className="mt-4 rounded-xl bg-slate-950 px-4 py-2.5 text-center text-xs font-bold text-white">
-                  View Plans
-                </div>
+                {billing
+                  ? "Hide plans"
+                  : "View plans"}
               </button>
-            )}
-          </div>
 
-          {/* DELETE */}
+              {billing && (
+                <div className="mt-5">
+                  <BillingCards />
+                </div>
+              )}
+            </>
+          )}
 
-          {projectIdState && (
-            <div className="mt-8 border-t border-slate-200 pt-6">
-              <button
-                type="button"
-                onClick={
-                  deleteProject
-                }
-                disabled={
-                  deleting
-                }
-                className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-200 px-4 py-2.5 text-sm font-bold text-red-600 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {deleting ? (
-                  <Loader2
-                    size={16}
-                    className="animate-spin"
-                  />
-                ) : (
-                  <Trash2
-                    size={16}
-                  />
-                )}
-
-                {deleting
-                  ? "Deleting..."
-                  : "Delete project"}
-              </button>
+          {/* MESSAGE */}
+          {message && (
+            <div className="mt-4 rounded-xl bg-slate-100 p-3 text-sm">
+              {message}
             </div>
           )}
         </aside>
-      </main>
+      </div>
+    </main>
+  );
+}
 
-      {/* BILLING MODAL */}
+/*
+ * Artwork face upload component
+ */
+function Face({
+  name,
+  value,
+  onClick,
+}: {
+  name: string;
+  value: string | null;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="mt-4 flex w-full items-center gap-3 rounded-xl border p-3 text-left hover:border-indigo-400"
+    >
+      <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-lg bg-slate-100">
+        {value ? (
+          <img
+            src={value}
+            alt={`${name} artwork`}
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <ImagePlus
+            size={18}
+            className="text-slate-400"
+          />
+        )}
+      </div>
 
-      {billing && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
-          onMouseDown={(
-            event,
-          ) => {
-            if (
-              event.target ===
-              event.currentTarget
-            ) {
-              setBilling(
-                false,
-              );
-            }
-          }}
-        >
-          <div className="relative max-h-[90vh] w-full max-w-6xl overflow-y-auto rounded-3xl bg-white p-5 shadow-2xl sm:p-7">
-            {/* CLOSE */}
+      <span className="text-sm font-semibold">
+        {name}
 
-            <button
-              type="button"
-              onClick={() =>
-                setBilling(
-                  false,
-                )
-              }
-              className="absolute right-5 top-5 rounded-xl p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-900"
-              aria-label="Close plans"
-            >
-              <X size={20} />
-            </button>
-
-            <div className="pr-14">
-              <div className="text-xs font-bold uppercase tracking-wider text-indigo-600">
-                BoxShot Studio
-              </div>
-
-              <h2 className="mt-1 text-2xl font-black tracking-tight text-slate-950">
-                {billingStatus?.subscribed
-                  ? "Change your subscription"
-                  : "Choose your plan"}
-              </h2>
-
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
-                {billingStatus?.subscribed
-                  ? `You are currently subscribed to the ${planName} plan. Choose another plan below if you want to change your subscription.`
-                  : "Choose a plan to unlock PNG downloads and more BoxShot Studio usage."}
-              </p>
-            </div>
-
-            <div className="mt-7">
-              <BillingCards />
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+        <small className="block font-normal text-slate-400">
+          Click to upload
+        </small>
+      </span>
+    </button>
   );
 }
