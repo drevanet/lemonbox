@@ -23,15 +23,24 @@ model Project {
   id          String   @id @default(cuid())
   userId      String
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
   name        String
+
   frontImage  String?  @db.Text
+  backImage   String?  @db.Text
   rightImage  String?  @db.Text
+  leftImage   String?  @db.Text
   topImage    String?  @db.Text
+  bottomImage String?  @db.Text
+
   background  String   @default("#eef2ff")
+
   rotationX   Float    @default(-0.15)
   rotationY   Float    @default(0.65)
   rotationZ   Float    @default(0)
+
   scale       Float    @default(1)
+
   updatedAt   DateTime @updatedAt
   createdAt   DateTime @default(now())
 

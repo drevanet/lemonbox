@@ -26,9 +26,16 @@ const BoxScene = dynamic(() => import("./BoxScene"), {
 type Project = {
   id: string;
   name: string;
+
   frontImage: string | null;
+  backImage: string | null;
+
   rightImage: string | null;
+  leftImage: string | null;
+
   topImage: string | null;
+  bottomImage: string | null;
+
   background: string;
   scale: number;
 };
@@ -59,10 +66,16 @@ export default function EditorClient({
 
   const canvasWrap = useRef<HTMLDivElement>(null);
 
+  /*
+   * Six independent file inputs.
+   */
   const fileRefs = {
     front: useRef<HTMLInputElement>(null),
+    back: useRef<HTMLInputElement>(null),
     right: useRef<HTMLInputElement>(null),
+    left: useRef<HTMLInputElement>(null),
     top: useRef<HTMLInputElement>(null),
+    bottom: useRef<HTMLInputElement>(null),
   };
 
   const [projectId, setProjectId] = useState<string | null>(
@@ -71,10 +84,16 @@ export default function EditorClient({
 
   const [name, setName] = useState("Untitled box");
 
+  /*
+   * Six editable faces.
+   */
   const [images, setImages] = useState<FaceImages>({
     front: null,
+    back: null,
     right: null,
+    left: null,
     top: null,
+    bottom: null,
   });
 
   const [background, setBackground] = useState("#eef2ff");
@@ -85,28 +104,30 @@ export default function EditorClient({
 
   const [message, setMessage] = useState("");
 
+  /*
+   * Billing modal.
+   */
   const [billing, setBilling] = useState(false);
 
-  const [billingLoading, setBillingLoading] =
-    useState(true);
+  const [billingLoading, setBillingLoading] = useState(true);
 
   const [billingStatus, setBillingStatus] =
     useState<BillingStatus | null>(null);
 
   /*
-   * Load subscription status
+   * ------------------------------------------------
+   * LOAD BILLING STATUS
+   * ------------------------------------------------
    */
+
   useEffect(() => {
     let cancelled = false;
 
     async function loadBillingStatus() {
       try {
-        const response = await fetch(
-          "/api/billing/status",
-          {
-            cache: "no-store",
-          },
-        );
+        const response = await fetch("/api/billing/status", {
+          cache: "no-store",
+        });
 
         if (!response.ok) {
           if (!cancelled) {
@@ -126,10 +147,7 @@ export default function EditorClient({
           setBillingStatus(data);
         }
       } catch (error) {
-        console.error(
-          "Billing status error:",
-          error,
-        );
+        console.error("Billing status error:", error);
 
         if (!cancelled) {
           setBillingStatus({
@@ -152,10 +170,15 @@ export default function EditorClient({
   }, []);
 
   /*
-   * Load project
+   * ------------------------------------------------
+   * LOAD PROJECT
+   * ------------------------------------------------
    */
+
   useEffect(() => {
-    if (!initialProjectId) return;
+    if (!initialProjectId) {
+      return;
+    }
 
     let cancelled = false;
 
@@ -163,45 +186,51 @@ export default function EditorClient({
       try {
         const response = await fetch(
           `/api/projects/${initialProjectId}`,
+          {
+            cache: "no-store",
+          },
         );
 
         const data = await response.json();
 
         if (!response.ok) {
-          setMessage(
-            data.error ||
-              "Could not load project.",
-          );
+          if (!cancelled) {
+            setMessage(
+              data.error || "Could not load project.",
+            );
+          }
 
           return;
         }
 
-        const project: Project | undefined =
-          data.project;
+        const project: Project | undefined = data.project;
 
-        if (!project || cancelled) return;
+        if (!project || cancelled) {
+          return;
+        }
 
         setProjectId(project.id);
         setName(project.name);
 
+        /*
+         * Load all six faces.
+         */
         setImages({
           front: project.frontImage,
+          back: project.backImage,
           right: project.rightImage,
+          left: project.leftImage,
           top: project.topImage,
+          bottom: project.bottomImage,
         });
 
         setBackground(project.background);
         setScale(project.scale);
       } catch (error) {
-        console.error(
-          "Load project error:",
-          error,
-        );
+        console.error("Load project error:", error);
 
         if (!cancelled) {
-          setMessage(
-            "Could not load project.",
-          );
+          setMessage("Could not load project.");
         }
       }
     }
@@ -214,17 +243,30 @@ export default function EditorClient({
   }, [initialProjectId]);
 
   /*
-   * Upload artwork
+   * ------------------------------------------------
+   * UPLOAD FACE
+   * ------------------------------------------------
    */
-  async function upload(
+
+  function upload(
     face: keyof FaceImages,
     file?: File,
   ) {
-    if (!file) return;
+    if (!file) {
+      return;
+    }
 
     if (file.size > 3_000_000) {
       setMessage(
         "Keep each artwork image below 3 MB.",
+      );
+
+      return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+      setMessage(
+        "Please select a valid image file.",
       );
 
       return;
@@ -242,17 +284,18 @@ export default function EditorClient({
     };
 
     reader.onerror = () => {
-      setMessage(
-        "Could not read that image.",
-      );
+      setMessage("Could not read that image.");
     };
 
     reader.readAsDataURL(file);
   }
 
   /*
-   * Save project
+   * ------------------------------------------------
+   * SAVE PROJECT
+   * ------------------------------------------------
    */
+
   async function save() {
     setSaving(true);
     setMessage("");
@@ -260,9 +303,17 @@ export default function EditorClient({
     try {
       const body = {
         name,
+
+        /*
+         * All six images.
+         */
         frontImage: images.front,
+        backImage: images.back,
         rightImage: images.right,
+        leftImage: images.left,
         topImage: images.top,
+        bottomImage: images.bottom,
+
         background,
         scale,
       };
@@ -284,8 +335,7 @@ export default function EditorClient({
 
       if (!response.ok) {
         setMessage(
-          data.error ||
-            "Could not save the project.",
+          data.error || "Could not save the project.",
         );
 
         return;
@@ -301,30 +351,32 @@ export default function EditorClient({
 
       setMessage("Saved");
     } catch (error) {
-      console.error(
-        "Save project error:",
-        error,
-      );
+      console.error("Save project error:", error);
 
-      setMessage(
-        "Could not save the project.",
-      );
+      setMessage("Could not save the project.");
     } finally {
       setSaving(false);
     }
   }
 
   /*
-   * Delete project
+   * ------------------------------------------------
+   * DELETE PROJECT
+   * ------------------------------------------------
    */
+
   async function remove() {
-    if (!projectId) return;
+    if (!projectId) {
+      return;
+    }
 
     const confirmed = window.confirm(
       "Delete this project?",
     );
 
-    if (!confirmed) return;
+    if (!confirmed) {
+      return;
+    }
 
     try {
       const response = await fetch(
@@ -338,8 +390,7 @@ export default function EditorClient({
         const data = await response.json();
 
         setMessage(
-          data.error ||
-            "Could not delete the project.",
+          data.error || "Could not delete the project.",
         );
 
         return;
@@ -347,20 +398,18 @@ export default function EditorClient({
 
       router.push("/dashboard");
     } catch (error) {
-      console.error(
-        "Delete project error:",
-        error,
-      );
+      console.error("Delete project error:", error);
 
-      setMessage(
-        "Could not delete the project.",
-      );
+      setMessage("Could not delete the project.");
     }
   }
 
   /*
-   * Download PNG
+   * ------------------------------------------------
+   * DOWNLOAD
+   * ------------------------------------------------
    */
+
   async function download() {
     if (!projectId) {
       setMessage(
@@ -425,15 +474,19 @@ export default function EditorClient({
       link.download =
         `${
           name
-            .replace(/[^a-z0-9]+/gi, "-")
+            .replace(
+              /[^a-z0-9]+/gi,
+              "-",
+            )
             .toLowerCase() ||
           "boxshot"
         }.png`;
 
-      link.href = canvas.toDataURL(
-        "image/png",
-        1,
-      );
+      link.href =
+        canvas.toDataURL(
+          "image/png",
+          1,
+        );
 
       link.click();
 
@@ -444,8 +497,7 @@ export default function EditorClient({
       );
 
       /*
-       * Refresh subscription usage
-       * after successful download.
+       * Refresh subscription/download count.
        */
       try {
         const response = await fetch(
@@ -479,9 +531,11 @@ export default function EditorClient({
   }
 
   /*
-   * Convert database plan name
-   * into display name.
+   * ------------------------------------------------
+   * BILLING HELPERS
+   * ------------------------------------------------
    */
+
   function formatPlan(plan: string) {
     const names: Record<string, string> = {
       starter: "Starter",
@@ -498,9 +552,6 @@ export default function EditorClient({
     );
   }
 
-  /*
-   * Format subscription status
-   */
   function formatStatus(status: string) {
     const names: Record<string, string> = {
       active: "Active",
@@ -516,13 +567,12 @@ export default function EditorClient({
     );
   }
 
-  /*
-   * Format dates
-   */
   function formatDate(
     date: string | null,
   ) {
-    if (!date) return null;
+    if (!date) {
+      return null;
+    }
 
     const parsed = new Date(date);
 
@@ -540,14 +590,10 @@ export default function EditorClient({
     );
   }
 
-  /*
-   * Download limits
-   */
   function getDownloadLimit(
     plan: string,
   ): number | null {
-    const normalized =
-      plan.toLowerCase();
+    const normalized = plan.toLowerCase();
 
     if (normalized === "starter") {
       return 10;
@@ -570,6 +616,12 @@ export default function EditorClient({
     return null;
   }
 
+  /*
+   * ------------------------------------------------
+   * SUBSCRIPTION STATE
+   * ------------------------------------------------
+   */
+
   const subscription =
     billingStatus?.subscription;
 
@@ -584,9 +636,16 @@ export default function EditorClient({
         )
       : null;
 
+  /*
+   * ------------------------------------------------
+   * RENDER
+   * ------------------------------------------------
+   */
+
   return (
     <main className="min-h-screen bg-slate-100">
       {/* HEADER */}
+
       <header className="border-b bg-white">
         <div className="mx-auto flex max-w-[1500px] items-center justify-between px-5 py-4">
           <div className="flex items-center gap-3">
@@ -607,7 +666,7 @@ export default function EditorClient({
               />
 
               <p className="text-xs text-slate-400">
-                3D BoxShot Editor
+                6-Face 3D BoxShot Editor
               </p>
             </div>
           </div>
@@ -621,9 +680,7 @@ export default function EditorClient({
             >
               <Save size={16} />
 
-              {saving
-                ? "Saving…"
-                : "Save"}
+              {saving ? "Saving…" : "Save"}
             </button>
 
             <button
@@ -642,83 +699,175 @@ export default function EditorClient({
         </div>
       </header>
 
-      {/* MAIN EDITOR */}
-      <div className="mx-auto grid max-w-[1500px] gap-5 p-5 lg:grid-cols-[280px_1fr_280px]">
-        {/* ARTWORK SIDEBAR */}
-        <aside className="order-2 rounded-2xl border bg-white p-5 lg:order-1">
+      {/* EDITOR LAYOUT */}
+
+      <div className="mx-auto grid max-w-[1500px] gap-5 p-5 lg:grid-cols-[300px_1fr_300px]">
+        {/* LEFT SIDEBAR */}
+
+        <aside className="order-2 h-fit rounded-2xl border bg-white p-5 lg:order-1">
           <h2 className="font-bold">
-            Artwork
+            Box Faces
           </h2>
 
-          <p className="mt-1 text-xs text-slate-500">
-            Upload images for the visible
-            faces.
+          <p className="mt-1 text-xs leading-5 text-slate-500">
+            Upload a separate image for every
+            side of the box.
           </p>
 
-          <Face
-            name="Front"
-            value={images.front}
-            onClick={() =>
-              fileRefs.front.current?.click()
-            }
-          />
+          <div className="mt-2 space-y-1">
+            {/* FRONT */}
 
-          <input
-            ref={fileRefs.front}
-            type="file"
-            accept="image/*"
-            hidden
-            onChange={(event) =>
-              upload(
-                "front",
-                event.target.files?.[0],
-              )
-            }
-          />
+            <Face
+              name="Front"
+              value={images.front}
+              onClick={() =>
+                fileRefs.front.current?.click()
+              }
+            />
 
-          <Face
-            name="Right side"
-            value={images.right}
-            onClick={() =>
-              fileRefs.right.current?.click()
-            }
-          />
+            <input
+              ref={fileRefs.front}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              hidden
+              onChange={(event) => {
+                upload(
+                  "front",
+                  event.target.files?.[0],
+                );
 
-          <input
-            ref={fileRefs.right}
-            type="file"
-            accept="image/*"
-            hidden
-            onChange={(event) =>
-              upload(
-                "right",
-                event.target.files?.[0],
-              )
-            }
-          />
+                event.currentTarget.value = "";
+              }}
+            />
 
-          <Face
-            name="Top"
-            value={images.top}
-            onClick={() =>
-              fileRefs.top.current?.click()
-            }
-          />
+            {/* BACK */}
 
-          <input
-            ref={fileRefs.top}
-            type="file"
-            accept="image/*"
-            hidden
-            onChange={(event) =>
-              upload(
-                "top",
-                event.target.files?.[0],
-              )
-            }
-          />
+            <Face
+              name="Back"
+              value={images.back}
+              onClick={() =>
+                fileRefs.back.current?.click()
+              }
+            />
+
+            <input
+              ref={fileRefs.back}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              hidden
+              onChange={(event) => {
+                upload(
+                  "back",
+                  event.target.files?.[0],
+                );
+
+                event.currentTarget.value = "";
+              }}
+            />
+
+            {/* RIGHT */}
+
+            <Face
+              name="Right"
+              value={images.right}
+              onClick={() =>
+                fileRefs.right.current?.click()
+              }
+            />
+
+            <input
+              ref={fileRefs.right}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              hidden
+              onChange={(event) => {
+                upload(
+                  "right",
+                  event.target.files?.[0],
+                );
+
+                event.currentTarget.value = "";
+              }}
+            />
+
+            {/* LEFT */}
+
+            <Face
+              name="Left"
+              value={images.left}
+              onClick={() =>
+                fileRefs.left.current?.click()
+              }
+            />
+
+            <input
+              ref={fileRefs.left}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              hidden
+              onChange={(event) => {
+                upload(
+                  "left",
+                  event.target.files?.[0],
+                );
+
+                event.currentTarget.value = "";
+              }}
+            />
+
+            {/* TOP */}
+
+            <Face
+              name="Top"
+              value={images.top}
+              onClick={() =>
+                fileRefs.top.current?.click()
+              }
+            />
+
+            <input
+              ref={fileRefs.top}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              hidden
+              onChange={(event) => {
+                upload(
+                  "top",
+                  event.target.files?.[0],
+                );
+
+                event.currentTarget.value = "";
+              }}
+            />
+
+            {/* BOTTOM */}
+
+            <Face
+              name="Bottom"
+              value={images.bottom}
+              onClick={() =>
+                fileRefs.bottom.current?.click()
+              }
+            />
+
+            <input
+              ref={fileRefs.bottom}
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              hidden
+              onChange={(event) => {
+                upload(
+                  "bottom",
+                  event.target.files?.[0],
+                );
+
+                event.currentTarget.value = "";
+              }}
+            />
+          </div>
 
           {/* SCALE */}
+
           <label className="mt-6 block text-sm font-semibold">
             Box scale
 
@@ -737,9 +886,14 @@ export default function EditorClient({
               }
               className="mt-3 w-full"
             />
+
+            <span className="mt-1 block text-xs font-normal text-slate-400">
+              {scale.toFixed(2)}×
+            </span>
           </label>
 
           {/* BACKGROUND */}
+
           <label className="mt-5 block text-sm font-semibold">
             Background
 
@@ -756,6 +910,7 @@ export default function EditorClient({
           </label>
 
           {/* DELETE */}
+
           {projectId && (
             <button
               type="button"
@@ -769,10 +924,11 @@ export default function EditorClient({
         </aside>
 
         {/* 3D PREVIEW */}
+
         <section className="order-1 min-h-[620px] lg:order-2">
           <div
             ref={canvasWrap}
-            className="h-[620px] rounded-3xl"
+            className="h-[620px] overflow-hidden rounded-3xl"
             style={{
               background,
             }}
@@ -784,7 +940,8 @@ export default function EditorClient({
           </div>
         </section>
 
-        {/* DOWNLOAD / SUBSCRIPTION */}
+        {/* RIGHT SIDEBAR */}
+
         <aside className="order-3 h-fit rounded-2xl border bg-white p-5">
           <div className="flex items-center gap-2">
             <Crown
@@ -797,7 +954,6 @@ export default function EditorClient({
             </h2>
           </div>
 
-          {/* CHECKING STATUS */}
           {billingLoading ? (
             <div className="mt-5 flex items-center gap-2 rounded-xl bg-slate-50 p-4 text-sm text-slate-500">
               <Loader2
@@ -810,7 +966,8 @@ export default function EditorClient({
           ) : isSubscribed &&
             subscription ? (
             <>
-              {/* ACTIVE SUBSCRIPTION */}
+              {/* CURRENT PLAN */}
+
               <div className="mt-4 rounded-2xl border border-indigo-100 bg-indigo-50 p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -825,11 +982,8 @@ export default function EditorClient({
                     </h3>
                   </div>
 
-                  {/* STATUS */}
                   <div className="flex items-center gap-1 rounded-full bg-white px-2.5 py-1 text-xs font-bold text-green-600">
-                    <CheckCircle2
-                      size={13}
-                    />
+                    <CheckCircle2 size={13} />
 
                     {formatStatus(
                       subscription.status,
@@ -838,6 +992,7 @@ export default function EditorClient({
                 </div>
 
                 {/* DOWNLOAD USAGE */}
+
                 <div className="mt-5">
                   <div className="flex items-center justify-between text-sm">
                     <span className="font-semibold text-slate-700">
@@ -845,7 +1000,9 @@ export default function EditorClient({
                     </span>
 
                     <span className="font-bold text-slate-900">
-                      {subscription.downloadsUsed}
+                      {
+                        subscription.downloadsUsed
+                      }
 
                       {downloadLimit === null
                         ? " / Unlimited"
@@ -870,7 +1027,8 @@ export default function EditorClient({
                   )}
                 </div>
 
-                {/* RENEWAL DATE */}
+                {/* RENEWAL */}
+
                 {subscription.renewsAt && (
                   <div className="mt-4 flex items-center gap-2 text-xs text-slate-500">
                     <CalendarDays
@@ -887,6 +1045,7 @@ export default function EditorClient({
                 )}
 
                 {/* END DATE */}
+
                 {subscription.endsAt && (
                   <div className="mt-2 text-xs text-slate-500">
                     Ends{" "}
@@ -899,64 +1058,42 @@ export default function EditorClient({
 
               <p className="mt-3 text-xs leading-5 text-slate-400">
                 Your subscription is active.
-                Your download allowance is
-                reset according to your billing
-                period.
+                Your download allowance resets
+                according to your billing period.
               </p>
 
               {/* CHANGE PLAN */}
+
               <button
                 type="button"
-                onClick={() =>
-                  setBilling(
-                    (value) => !value,
-                  )
-                }
-                className="mt-4 w-full rounded-xl border px-4 py-3 text-sm font-semibold hover:bg-slate-50"
+                onClick={() => setBilling(true)}
+                className="mt-4 w-full rounded-xl border px-4 py-3 text-sm font-semibold transition hover:bg-slate-50"
               >
-                {billing
-                  ? "Hide plans"
-                  : "Change plan"}
+                Change plan
               </button>
-
-              {billing && (
-                <div className="mt-5">
-                  <BillingCards />
-                </div>
-              )}
             </>
           ) : (
             <>
-              {/* NO ACTIVE SUBSCRIPTION */}
               <p className="mt-2 text-sm leading-6 text-slate-500">
                 Save projects for free. A
-                subscription is required to
-                export PNG downloads.
+                subscription is required to export
+                PNG downloads.
               </p>
+
+              {/* VIEW PLANS */}
 
               <button
                 type="button"
-                onClick={() =>
-                  setBilling(
-                    (value) => !value,
-                  )
-                }
-                className="mt-4 w-full rounded-xl border px-4 py-3 text-sm font-semibold hover:bg-slate-50"
+                onClick={() => setBilling(true)}
+                className="mt-4 w-full rounded-xl bg-indigo-600 px-4 py-3 text-sm font-bold text-white transition hover:bg-indigo-700"
               >
-                {billing
-                  ? "Hide plans"
-                  : "View plans"}
+                View plans
               </button>
-
-              {billing && (
-                <div className="mt-5">
-                  <BillingCards />
-                </div>
-              )}
             </>
           )}
 
           {/* MESSAGE */}
+
           {message && (
             <div className="mt-4 rounded-xl bg-slate-100 p-3 text-sm">
               {message}
@@ -964,13 +1101,72 @@ export default function EditorClient({
           )}
         </aside>
       </div>
+
+      {/* ==================================================
+          SUBSCRIPTION PLANS MODAL
+          ================================================== */}
+
+      {billing && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm"
+          onMouseDown={(event) => {
+            if (
+              event.target ===
+              event.currentTarget
+            ) {
+              setBilling(false);
+            }
+          }}
+        >
+          <div className="relative max-h-[90vh] w-full max-w-6xl overflow-y-auto rounded-3xl bg-white p-5 shadow-2xl sm:p-7">
+            {/* CLOSE BUTTON */}
+
+            <button
+              type="button"
+              onClick={() => setBilling(false)}
+              className="absolute right-5 top-5 z-10 flex h-10 w-10 items-center justify-center rounded-full border bg-white text-2xl font-bold leading-none text-slate-500 shadow-sm transition hover:bg-slate-100 hover:text-slate-900"
+              aria-label="Close plans"
+            >
+              ×
+            </button>
+
+            {/* MODAL HEADER */}
+
+            <div className="pr-14">
+              <p className="text-sm font-bold uppercase tracking-wider text-indigo-600">
+                BoxShot Studio
+              </p>
+
+              <h2 className="mt-1 text-2xl font-black text-slate-950 sm:text-3xl">
+                {isSubscribed
+                  ? "Change your subscription"
+                  : "Choose your plan"}
+              </h2>
+
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+                Choose the plan that matches your
+                box shot production needs.
+              </p>
+            </div>
+
+            {/* PLANS */}
+
+            <div className="mt-7">
+              <BillingCards />
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
 
 /*
- * Artwork face upload component
+ * ==================================================
+ * FACE UPLOAD COMPONENT
+ * ==================================================
  */
+
 function Face({
   name,
   value,
@@ -984,9 +1180,9 @@ function Face({
     <button
       type="button"
       onClick={onClick}
-      className="mt-4 flex w-full items-center gap-3 rounded-xl border p-3 text-left hover:border-indigo-400"
+      className="mt-3 flex w-full items-center gap-3 rounded-xl border p-3 text-left transition hover:border-indigo-400 hover:bg-indigo-50/30"
     >
-      <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-lg bg-slate-100">
+      <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-100">
         {value ? (
           <img
             src={value}
@@ -1005,7 +1201,9 @@ function Face({
         {name}
 
         <small className="block font-normal text-slate-400">
-          Click to upload
+          {value
+            ? "Click to replace"
+            : "Click to upload"}
         </small>
       </span>
     </button>
