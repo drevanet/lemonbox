@@ -8,30 +8,48 @@ datasource db {
 }
 
 model User {
-  id            String         @id @default(cuid())
-  name          String?
-  email         String         @unique
-  passwordHash  String
-  lemonCustomerId String? @unique
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  projects      Project[]
-  subscription  Subscription?
+  id               String         @id @default(cuid())
+  name             String?
+  email            String         @unique
+  passwordHash     String
+
+  lemonCustomerId  String?        @unique
+
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  projects         Project[]
+  subscription     Subscription?
 }
 
 model Project {
   id          String   @id @default(cuid())
+
   userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User     @relation(
+    fields: [userId],
+    references: [id],
+    onDelete: Cascade
+  )
 
   name        String
 
+  /*
+   * SIX EDITABLE BOX FACES
+   */
+
   frontImage  String?  @db.Text
   backImage   String?  @db.Text
+
   rightImage  String?  @db.Text
   leftImage   String?  @db.Text
+
   topImage    String?  @db.Text
   bottomImage String?  @db.Text
+
+  /*
+   * EDITOR SETTINGS
+   */
 
   background  String   @default("#eef2ff")
 
@@ -41,27 +59,71 @@ model Project {
 
   scale       Float    @default(1)
 
-  updatedAt   DateTime @updatedAt
+  /*
+   * TIMESTAMPS
+   */
+
   createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  /*
+   * INDEX
+   */
 
   @@index([userId, updatedAt])
 }
 
 model Subscription {
-  id                   String   @id @default(cuid())
-  userId               String   @unique
-  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  lemonSubscriptionId  String   @unique
-  lemonCustomerId      String?
-  variantId            String
-  plan                 String
-  status               String
-  renewsAt             DateTime?
-  endsAt               DateTime?
-  currentPeriodStart   DateTime @default(now())
-  downloadsUsed        Int      @default(0)
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  id                  String   @id @default(cuid())
+
+  userId              String   @unique
+
+  user                User     @relation(
+    fields: [userId],
+    references: [id],
+    onDelete: Cascade
+  )
+
+  /*
+   * LEMON SQUEEZY
+   */
+
+  lemonSubscriptionId String   @unique
+  lemonCustomerId     String?
+
+  variantId           String
+  plan                String
+  status              String
+
+  /*
+   * BILLING DATES
+   */
+
+  renewsAt            DateTime?
+  endsAt              DateTime?
+
+  currentPeriodStart  DateTime @default(now())
+
+  /*
+   * DOWNLOAD USAGE
+   *
+   * Starter = 10
+   * Creator = 20
+   * Studio = unlimited
+   */
+
+  downloadsUsed      Int      @default(0)
+
+  /*
+   * TIMESTAMPS
+   */
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  /*
+   * INDEXES
+   */
 
   @@index([status, variantId])
 }
